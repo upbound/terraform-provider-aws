@@ -15,10 +15,16 @@ import (
 type AWSConfig conns.Config
 type AWSClient conns.AWSClient
 
-func GetProvider(ctx context.Context) (*fwprovider.Provider, *schema.Provider, error) {
+func GetProvider(ctx context.Context) (fwprovider.Provider, *schema.Provider, error) {
 	p, err := provider.New(ctx)
 	fwProvider := internalfwprovider.New(p)
-	return &fwProvider, p, err
+	return fwProvider, p, err
+}
+
+func GetFrameworkProviderWithPrimary(primary interface {
+	Meta() interface{}
+}) fwprovider.Provider {
+	return internalfwprovider.New(primary)
 }
 
 func GetProviderSchema(ctx context.Context) fwschema.Schema {
