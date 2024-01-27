@@ -30,12 +30,10 @@ func GetProviderSchema(ctx context.Context) (*schema.Provider, error) {
 }
 
 func GetFrameworkProviderSchema(ctx context.Context) (fwschema.Schema, error) {
-	p, _ := provider.New(ctx)
-	p, err := provider.New(ctx)
+	fwProvider, _, err := GetProvider(ctx)
 	if err != nil {
 		return fwschema.Schema{}, err
 	}
-	fwProvider := internalfwprovider.New(p)
 	schemaReq := fwprovider.SchemaRequest{}
 	schemaResp := fwprovider.SchemaResponse{}
 	fwProvider.Schema(ctx, schemaReq, &schemaResp)
