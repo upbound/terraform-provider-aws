@@ -204,6 +204,7 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/internal/service/ssoadmin"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/storagegateway"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/sts"
+	"github.com/hashicorp/terraform-provider-aws/internal/service/support"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/swf"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/synthetics"
 	"github.com/hashicorp/terraform-provider-aws/internal/service/timestreamwrite"
@@ -420,6 +421,7 @@ func servicePackages(ctx context.Context) []conns.ServicePackage {
 		ssoadmin.ServicePackage(ctx),
 		storagegateway.ServicePackage(ctx),
 		sts.ServicePackage(ctx),
+		support.ServicePackage(ctx),
 		swf.ServicePackage(ctx),
 		synthetics.ServicePackage(ctx),
 		timestreamwrite.ServicePackage(ctx),

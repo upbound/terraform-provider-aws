@@ -89,6 +89,7 @@ const (
 	SSMIncidentsEndpointID               = "ssm-incidents"
 	SSOAdminEndpointID                   = "sso"
 	STSEndpointID                        = "sts"
+	SupportEndpointID                    = "support"
 	SWFEndpointID                        = "swf"
 	TimestreamWriteEndpointID            = "ingest.timestream"
 	TranscribeEndpointID                 = "transcribe"
