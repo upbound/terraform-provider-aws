@@ -6,7 +6,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/support"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/support/types"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -64,9 +63,6 @@ func (r *resourceSupportCase) Schema(ctx context.Context, request resource.Schem
 			"cc_email_addresses": schema.ListAttribute{
 				Optional:    true,
 				ElementType: types.StringType,
-				Validators: []validator.List{
-					listvalidator.SizeAtMost(10),
-				},
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.RequiresReplace(),
 				},
