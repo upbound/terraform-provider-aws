@@ -271,6 +271,7 @@ provider "aws" {
   <li><code>ssoadmin</code></li>
   <li><code>storagegateway</code></li>
   <li><code>sts</code></li>
+  <li><code>support</code></li>
   <li><code>swf</code></li>
   <li><code>synthetics</code></li>
   <li><code>timestreamwrite</code></li>

@@ -203,6 +203,7 @@ Service Quotas
 Shield
 Signer
 Storage Gateway
+Support
 Timestream Write
 Transcribe
 Transfer Family

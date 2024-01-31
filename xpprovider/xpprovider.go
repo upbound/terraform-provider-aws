@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 // Package xpprovider exports needed internal types and functions used by Crossplane for instantiating, interacting and
 // configuring the underlying Terraform AWS providers.
 package xpprovider
