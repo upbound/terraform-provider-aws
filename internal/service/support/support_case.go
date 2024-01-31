@@ -16,6 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
+
 	"github.com/hashicorp/terraform-provider-aws/internal/create"
 	"github.com/hashicorp/terraform-provider-aws/internal/errs"
 	"github.com/hashicorp/terraform-provider-aws/internal/framework"
@@ -37,7 +38,7 @@ type resourceSupportCase struct {
 	framework.ResourceWithConfigure
 }
 
-func (r *resourceSupportCase) Metadata(_ context.Context, request resource.MetadataRequest, response *resource.MetadataResponse) {
+func (r *resourceSupportCase) Metadata(_ context.Context, _ resource.MetadataRequest, response *resource.MetadataResponse) {
 	response.TypeName = "aws_support_support_case"
 }
 
@@ -176,24 +177,22 @@ func (r *resourceSupportCase) Read(ctx context.Context, request resource.ReadReq
 	response.Diagnostics.Append(response.State.Set(ctx, &state)...)
 }
 
-// Update is a no-op, for now. For another no-op update example, see service/auditmanager/organization_admin_account_registration.go
-func (r *resourceSupportCase) Update(ctx context.Context, request resource.UpdateRequest, response *resource.UpdateResponse) {
+// Update is a no-op.
+func (r *resourceSupportCase) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
 }
 
-// Delete is a no-op, because AWS doesn't provide a deletion API. For another no-op update example, see service/auditmanager/organization_admin_account_registration.go
-func (r *resourceSupportCase) Delete(ctx context.Context, request resource.DeleteRequest, response *resource.DeleteResponse) {
+// Delete is a no-op, because AWS doesn't provide a deletion API.
+func (r *resourceSupportCase) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
 }
 
 func (r *resourceSupportCase) ImportState(ctx context.Context, request resource.ImportStateRequest, response *resource.ImportStateResponse) {
-	// TODO(cem): Discuss whether we should use "case_id" or "id" as resource identifier in Crossplane.
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), request, response)
 }
 
 func findSupportCaseByID(ctx context.Context, conn *support.Client, caseID string) (*awstypes.CaseDetails, error) {
-	// See internal/service/opensearchserverless/find.go findLifecyclePolicyByNameAndType()
 	if caseID == "" {
 		return nil, &retry.NotFoundError{
-			Message: "Cannot find SupportCase with an empty ID.",
+			Message: "cannot find SupportCase with an empty ID.",
 		}
 	}
 
@@ -214,7 +213,7 @@ func findSupportCaseByID(ctx context.Context, conn *support.Client, caseID strin
 		return nil, err
 	}
 
-	if output == nil || output.Cases == nil || len(output.Cases) == 0 {
+	if output == nil || len(output.Cases) == 0 {
 		return nil, tfresource.NewEmptyResultError(input)
 	}
 
