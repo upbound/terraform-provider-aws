@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/endpoints"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
+
 	"github.com/hashicorp/terraform-provider-aws/internal/acctest"
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
 	"github.com/hashicorp/terraform-provider-aws/internal/create"
@@ -26,9 +27,9 @@ func testAccErrorCheckSkip(t *testing.T) resource.ErrorCheckFunc {
 	)
 }
 
-func TestAccSupportCase_serial(t *testing.T) {
+func TestAccCase_serial(t *testing.T) {
 	testCases := map[string]func(t *testing.T){
-		"basic": testAccSupportCase_basic,
+		"basic": testAccCase_basic,
 		// "disappears": testAccAccountRegistration_disappears,
 		// "kms key":    testAccAccountRegistration_optionalKMSKey,
 	}
@@ -36,9 +37,9 @@ func TestAccSupportCase_serial(t *testing.T) {
 	acctest.RunSerialTests1Level(t, testCases, 0)
 }
 
-func testAccSupportCase_basic(t *testing.T) {
+func testAccCase_basic(t *testing.T) {
 	ctx := acctest.Context(t)
-	resourceName := "aws_support_support_case.test"
+	resourceName := "aws_support_case.test"
 
 	resource.Test(t, resource.TestCase{
 		PreCheck: func() {
@@ -50,9 +51,9 @@ func testAccSupportCase_basic(t *testing.T) {
 		// CheckDestroy:             testAccCheckAccountRegistrationDestroy(ctx),
 		Steps: []resource.TestStep{
 			{
-				Config: testAccConfigSupportCase_basic(),
+				Config: testAccConfigCase_basic(),
 				Check: resource.ComposeTestCheckFunc(
-					testAccCheckSupportCaseIsActive(ctx, resourceName),
+					testAccCheckCaseIsActive(ctx, resourceName),
 				),
 			},
 			{
@@ -64,16 +65,16 @@ func testAccSupportCase_basic(t *testing.T) {
 	})
 }
 
-// testAccCheckAccountRegisterationIsActive verifies AuditManager is active in the current account/region combination
-func testAccCheckSupportCaseIsActive(ctx context.Context, name string) resource.TestCheckFunc {
+// testAccCheckCaseIsActive verifies Case is active in the current account/region combination
+func testAccCheckCaseIsActive(ctx context.Context, name string) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		rs, ok := s.RootModule().Resources[name]
 		if !ok {
-			return create.Error(names.Support, create.ErrActionCheckingExistence, tfsupport.ResourceNameSupportCase, name, errors.New("not found"))
+			return create.Error(names.Support, create.ErrActionCheckingExistence, tfsupport.ResourceNameCase, name, errors.New("not found"))
 		}
 
 		if rs.Primary.ID == "" {
-			return create.Error(names.Support, create.ErrActionCheckingExistence, tfsupport.ResourceNameSupportCase, name, errors.New("not set"))
+			return create.Error(names.Support, create.ErrActionCheckingExistence, tfsupport.ResourceNameCase, name, errors.New("not set"))
 		}
 
 		conn := acctest.Provider.Meta().(*conns.AWSClient).SupportClient(ctx)
@@ -81,21 +82,20 @@ func testAccCheckSupportCaseIsActive(ctx context.Context, name string) resource.
 			CaseIdList: []string{rs.Primary.ID},
 		})
 		if err != nil {
-			return create.Error(names.Support, create.ErrActionCheckingExistence, tfsupport.ResourceNameSupportCase, rs.Primary.ID, err)
+			return create.Error(names.Support, create.ErrActionCheckingExistence, tfsupport.ResourceNameCase, rs.Primary.ID, err)
 		}
 
-		// TODO(cem): Consider performing extra checks here, like resource ID, or whatever checks there could be.
 		if out == nil || len(out.Cases) != 1 {
-			return create.Error(names.Support, create.ErrActionCheckingExistence, tfsupport.ResourceNameSupportCase, rs.Primary.ID, errors.New("support case not active"))
+			return create.Error(names.Support, create.ErrActionCheckingExistence, tfsupport.ResourceNameCase, rs.Primary.ID, errors.New("support case not active"))
 		}
 
 		return nil
 	}
 }
 
-func testAccConfigSupportCase_basic() string {
+func testAccConfigCase_basic() string {
 	return `
-resource "aws_support_support_case" "test" {
+resource "aws_support_case" "test" {
 	subject = "TEST CASE-Please ignore"
 	communication_body = "This support case is created for AWS SDK development purposes."
 	issue_type = "technical"

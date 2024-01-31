@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 package support
 
 import (
@@ -25,25 +28,25 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
 
-// @FrameworkResource(name="Support Case")
-func newResourceSupportCase(_ context.Context) (resource.ResourceWithConfigure, error) {
-	return &resourceSupportCase{}, nil
+// @FrameworkResource(name="Case")
+func newResourceCase(_ context.Context) (resource.ResourceWithConfigure, error) {
+	return &resourceCase{}, nil
 }
 
 const (
-	ResourceNameSupportCase = "SupportCase"
+	ResourceNameCase = "Case"
 )
 
-type resourceSupportCase struct {
+type resourceCase struct {
 	framework.ResourceWithConfigure
 }
 
-func (r *resourceSupportCase) Metadata(_ context.Context, _ resource.MetadataRequest, response *resource.MetadataResponse) {
-	response.TypeName = "aws_support_support_case"
+func (r *resourceCase) Metadata(_ context.Context, _ resource.MetadataRequest, response *resource.MetadataResponse) {
+	response.TypeName = "aws_support_case"
 }
 
 // Schema returns the schema for this resource.
-func (r *resourceSupportCase) Schema(ctx context.Context, request resource.SchemaRequest, response *resource.SchemaResponse) {
+func (r *resourceCase) Schema(ctx context.Context, request resource.SchemaRequest, response *resource.SchemaResponse) {
 	response.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"case_id": schema.StringAttribute{
@@ -115,8 +118,8 @@ func (r *resourceSupportCase) Schema(ctx context.Context, request resource.Schem
 	}
 }
 
-func (r *resourceSupportCase) Create(ctx context.Context, request resource.CreateRequest, response *resource.CreateResponse) {
-	var plan resourceSupportCaseData
+func (r *resourceCase) Create(ctx context.Context, request resource.CreateRequest, response *resource.CreateResponse) {
+	var plan resourceCaseData
 	response.Diagnostics.Append(request.Plan.Get(ctx, &plan)...)
 	if response.Diagnostics.HasError() {
 		return
@@ -136,14 +139,14 @@ func (r *resourceSupportCase) Create(ctx context.Context, request resource.Creat
 	}
 	output, err := conn.CreateCase(ctx, &input)
 	if err != nil {
-		response.Diagnostics.Append(create.DiagErrorFramework(names.Support, create.ErrActionCreating, ResourceNameSupportCase, plan.Subject.String(), err))
+		response.Diagnostics.Append(create.DiagErrorFramework(names.Support, create.ErrActionCreating, ResourceNameCase, plan.Subject.String(), err))
 		return
 	}
 
 	// Create API call returns only Case ID. Get other details as well.
-	caseDetails, err := findSupportCaseByID(ctx, conn, *output.CaseId)
+	caseDetails, err := findCaseByID(ctx, conn, *output.CaseId)
 	if err != nil {
-		response.Diagnostics.Append(create.DiagErrorFramework(names.Support, create.ErrActionChecking, ResourceNameSupportCase, plan.Subject.String(), err))
+		response.Diagnostics.Append(create.DiagErrorFramework(names.Support, create.ErrActionChecking, ResourceNameCase, plan.Subject.String(), err))
 		return
 	}
 
@@ -153,8 +156,8 @@ func (r *resourceSupportCase) Create(ctx context.Context, request resource.Creat
 	response.Diagnostics.Append(response.State.Set(ctx, state)...)
 }
 
-func (r *resourceSupportCase) Read(ctx context.Context, request resource.ReadRequest, response *resource.ReadResponse) {
-	var state resourceSupportCaseData
+func (r *resourceCase) Read(ctx context.Context, request resource.ReadRequest, response *resource.ReadResponse) {
+	var state resourceCaseData
 	response.Diagnostics.Append(request.State.Get(ctx, &state)...)
 	if response.Diagnostics.HasError() {
 		return
@@ -162,14 +165,14 @@ func (r *resourceSupportCase) Read(ctx context.Context, request resource.ReadReq
 
 	conn := r.Meta().SupportClient(ctx)
 
-	caseDetails, err := findSupportCaseByID(ctx, conn, state.CaseID.ValueString())
+	caseDetails, err := findCaseByID(ctx, conn, state.ID.ValueString())
 	if tfresource.NotFound(err) {
-		create.LogNotFoundRemoveState(names.Support, create.ErrActionReading, ResourceNameSupportCase, state.ID.ValueString())
+		create.LogNotFoundRemoveState(names.Support, create.ErrActionReading, ResourceNameCase, state.ID.ValueString())
 		response.State.RemoveResource(ctx)
 		return
 	}
 	if err != nil {
-		response.Diagnostics.Append(create.DiagErrorFramework(names.Support, create.ErrActionReading, ResourceNameSupportCase, state.ID.String(), err))
+		response.Diagnostics.Append(create.DiagErrorFramework(names.Support, create.ErrActionReading, ResourceNameCase, state.ID.String(), err))
 		return
 	}
 
@@ -178,21 +181,21 @@ func (r *resourceSupportCase) Read(ctx context.Context, request resource.ReadReq
 }
 
 // Update is a no-op.
-func (r *resourceSupportCase) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+func (r *resourceCase) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
 }
 
 // Delete is a no-op, because AWS doesn't provide a deletion API.
-func (r *resourceSupportCase) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
+func (r *resourceCase) Delete(_ context.Context, _ resource.DeleteRequest, _ *resource.DeleteResponse) {
 }
 
-func (r *resourceSupportCase) ImportState(ctx context.Context, request resource.ImportStateRequest, response *resource.ImportStateResponse) {
+func (r *resourceCase) ImportState(ctx context.Context, request resource.ImportStateRequest, response *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), request, response)
 }
 
-func findSupportCaseByID(ctx context.Context, conn *support.Client, caseID string) (*awstypes.CaseDetails, error) {
+func findCaseByID(ctx context.Context, conn *support.Client, caseID string) (*awstypes.CaseDetails, error) {
 	if caseID == "" {
 		return nil, &retry.NotFoundError{
-			Message: "cannot find SupportCase with an empty ID.",
+			Message: "cannot find Case with an empty ID.",
 		}
 	}
 
@@ -224,7 +227,7 @@ func findSupportCaseByID(ctx context.Context, conn *support.Client, caseID strin
 	return &output.Cases[0], nil
 }
 
-type resourceSupportCaseData struct {
+type resourceCaseData struct {
 	CaseID            types.String `tfsdk:"case_id"`
 	CategoryCode      types.String `tfsdk:"category_code"`
 	CCEmailAddresses  types.List   `tfsdk:"cc_email_addresses"`
@@ -238,7 +241,7 @@ type resourceSupportCaseData struct {
 	Subject           types.String `tfsdk:"subject"`
 }
 
-func (rd *resourceSupportCaseData) refreshFromOutput(ctx context.Context, out *awstypes.CaseDetails) {
+func (rd *resourceCaseData) refreshFromOutput(ctx context.Context, out *awstypes.CaseDetails) {
 	if out == nil {
 		return
 	}
