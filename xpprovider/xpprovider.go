@@ -22,7 +22,7 @@ import (
 type AWSConfig conns.Config
 
 // AWSClient exports the internal type conns.AWSClient of the Terraform provider
-type AWSClient conns.AWSClient
+type AWSClient = conns.AWSClient
 
 // GetProvider returns new provider instances for both Terraform Plugin Framework provider of type provider.Provider
 // and Terraform Plugin SDKv2 provider of type *schema.Provider
