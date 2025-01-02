@@ -800,6 +800,10 @@ func GetAnyAttr(value cty.Value, attr string, shouldReturnSetElement func(string
 			return cty.NilVal, fmt.Errorf("invalid index: %s", indexStr)
 		}
 
+		if value.Type().IsListType() && (value.IsNull() || !value.IsKnown()) {
+			return cty.NilVal, fmt.Errorf("list attribute %s is unknown or null", attrName)
+		}
+
 		if index >= value.LengthInt() {
 			return cty.NilVal, fmt.Errorf("index %d out of range for attribute %s", index, attrName)
 		}
