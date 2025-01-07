@@ -1253,7 +1253,7 @@ func flattenForwardActionOneOf(actions cty.Value, i int, awsAction awstypes.Acti
 			action := actions.Index(index)
 			if action.IsKnown() && !action.IsNull() {
 				forward := action.GetAttr("forward")
-				if forward.IsKnown() && forward.LengthInt() > 0 {
+				if forward.IsKnown() && !forward.IsNull() && forward.LengthInt() > 0 {
 					actionMap["forward"] = flattenListenerActionForwardConfig(awsAction.ForwardConfig)
 				} else {
 					actionMap["target_group_arn"] = aws.ToString(awsAction.TargetGroupArn)
