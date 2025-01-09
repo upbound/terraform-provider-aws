@@ -18,3 +18,8 @@ func (c *AWSClient) AppendAPIOptions(options ...func(stack *middleware.Stack) er
 func (c *AWSClient) Session() *session_sdkv1.Session {
 	return c.session
 }
+
+// SetAccountID sets accountID of this client.
+func (c *AWSClient) SetAccountID(accountID string) {
+	c.accountID = accountID
+}
