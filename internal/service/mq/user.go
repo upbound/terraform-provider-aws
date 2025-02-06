@@ -6,6 +6,7 @@ package mq
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/service/mq"
@@ -72,6 +73,9 @@ func (r *resourceUser) Schema(ctx context.Context, request resource.SchemaReques
 			"groups": schema.ListAttribute{
 				ElementType: types.StringType,
 				Optional:    true,
+				PlanModifiers: []planmodifier.List{
+					listSortModifier{},
+				},
 			},
 			"id": framework.IDAttribute(),
 			"password": schema.StringAttribute{
@@ -284,4 +288,44 @@ func userHasChanges(plan, state resourceUserData) bool {
 		!plan.Groups.Equal(state.Groups) ||
 		!plan.Password.Equal(state.Password) ||
 		!plan.ReplicationUser.Equal(state.ReplicationUser)
+}
+
+// Custom Plan Modifier: Sorts list items
+type listSortModifier struct{}
+
+func (m listSortModifier) PlanModifyList(ctx context.Context, req planmodifier.ListRequest, resp *planmodifier.ListResponse) {
+	// Get plan value
+	planValue := req.PlanValue
+
+	// If plan value is null or unknown, do nothing
+	if planValue.IsNull() || planValue.IsUnknown() {
+		return
+	}
+
+	// Convert plan value to []string
+	var groups []string
+	diags := planValue.ElementsAs(ctx, &groups, false)
+	if diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
+
+	sort.Strings(groups)
+
+	// Write sorted value back to plan
+	sortedList, diags := types.ListValueFrom(ctx, types.StringType, groups)
+	if diags.HasError() {
+		resp.Diagnostics.Append(diags...)
+		return
+	}
+
+	resp.PlanValue = sortedList
+}
+
+func (m listSortModifier) Description(ctx context.Context) string {
+	return "Sorts the list elements alphabetically."
+}
+
+func (m listSortModifier) MarkdownDescription(ctx context.Context) string {
+	return "Sorts the list elements alphabetically."
 }
