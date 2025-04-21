@@ -10,6 +10,7 @@ import (
 	"github.com/YakDriver/regexache"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/wafv2/types"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/structure"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/hashicorp/terraform-provider-aws/internal/enum"
 	"github.com/hashicorp/terraform-provider-aws/internal/verify"
@@ -49,21 +50,57 @@ var ruleLabelsSchema = sync.OnceValue(func() *schema.Schema {
 	}
 })
 
-func ruleGroupRootStatementSchema(level int) *schema.Schema {
+func ruleGroupRootStatementSchema() *schema.Schema {
 	return &schema.Schema{
 		Type:     schema.TypeList,
 		Required: true,
 		MaxItems: 1,
 		Elem: &schema.Resource{
 			Schema: map[string]*schema.Schema{
-				"and_statement":                         statementSchema(level),
-				"byte_match_statement":                  byteMatchStatementSchema(),
-				"geo_match_statement":                   geoMatchStatementSchema(),
-				"ip_set_reference_statement":            ipSetReferenceStatementSchema(),
-				"label_match_statement":                 labelMatchStatementSchema(),
-				"not_statement":                         statementSchema(level),
-				"or_statement":                          statementSchema(level),
-				"rate_based_statement":                  rateBasedStatementSchema(level),
+				"and_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
+				"byte_match_statement":       byteMatchStatementSchema(),
+				"geo_match_statement":        geoMatchStatementSchema(),
+				"ip_set_reference_statement": ipSetReferenceStatementSchema(),
+				"label_match_statement":      labelMatchStatementSchema(),
+				"not_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
+				"or_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
+				"rate_based_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
 				"regex_match_statement":                 regexMatchStatementSchema(),
 				"regex_pattern_set_reference_statement": regexPatternSetReferenceStatementSchema(),
 				"size_constraint_statement":             sizeConstraintSchema(),
@@ -75,10 +112,7 @@ func ruleGroupRootStatementSchema(level int) *schema.Schema {
 }
 
 const (
-	statementSchemaCacheSize = max(
-		ruleGroupRootStatementSchemaLevel,
-		webACLRootStatementSchemaLevel,
-	)
+	statementSchemaCacheSize = 3
 )
 
 type schemaCache struct {
@@ -969,22 +1003,67 @@ var headersMatchPatternBaseSchema = sync.OnceValue(func() *schema.Schema {
 	}
 })
 
-func webACLRootStatementSchema(level int) *schema.Schema {
+func webACLRootStatementSchema() *schema.Schema {
 	return &schema.Schema{
 		Type:     schema.TypeList,
 		Required: true,
 		MaxItems: 1,
 		Elem: &schema.Resource{
 			Schema: map[string]*schema.Schema{
-				"and_statement":                         statementSchema(level),
-				"byte_match_statement":                  byteMatchStatementSchema(),
-				"geo_match_statement":                   geoMatchStatementSchema(),
-				"ip_set_reference_statement":            ipSetReferenceStatementSchema(),
-				"label_match_statement":                 labelMatchStatementSchema(),
-				"managed_rule_group_statement":          managedRuleGroupStatementSchema(level),
-				"not_statement":                         statementSchema(level),
-				"or_statement":                          statementSchema(level),
-				"rate_based_statement":                  rateBasedStatementSchema(level),
+				"and_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
+				"byte_match_statement":       byteMatchStatementSchema(),
+				"geo_match_statement":        geoMatchStatementSchema(),
+				"ip_set_reference_statement": ipSetReferenceStatementSchema(),
+				"label_match_statement":      labelMatchStatementSchema(),
+				"managed_rule_group_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
+				"not_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
+				"or_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
+				"rate_based_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
 				"regex_match_statement":                 regexMatchStatementSchema(),
 				"regex_pattern_set_reference_statement": regexPatternSetReferenceStatementSchema(),
 				"rule_group_reference_statement":        ruleGroupReferenceStatementSchema(),
@@ -996,7 +1075,7 @@ func webACLRootStatementSchema(level int) *schema.Schema {
 	}
 }
 
-func managedRuleGroupStatementSchema(level int) *schema.Schema {
+func managedRuleGroupStatementSchema() *schema.Schema {
 	return &schema.Schema{
 		Type:     schema.TypeList,
 		Optional: true,
@@ -1010,7 +1089,7 @@ func managedRuleGroupStatementSchema(level int) *schema.Schema {
 					ValidateFunc: validation.StringLenBetween(1, 128),
 				},
 				"rule_action_override": ruleActionOverrideSchema(),
-				"scope_down_statement": scopeDownStatementSchema(level - 1),
+				"scope_down_statement": scopeDownStatementSchema(),
 				"vendor_name": {
 					Type:         schema.TypeString,
 					Required:     true,
@@ -1026,7 +1105,7 @@ func managedRuleGroupStatementSchema(level int) *schema.Schema {
 	}
 }
 
-func rateBasedStatementSchema(level int) *schema.Schema {
+func rateBasedStatementSchema() *schema.Schema {
 	return &schema.Schema{
 		Type:     schema.TypeList,
 		Optional: true,
@@ -1146,26 +1225,53 @@ func rateBasedStatementSchema(level int) *schema.Schema {
 					Required:     true,
 					ValidateFunc: validation.IntBetween(10, 2000000000),
 				},
-				"scope_down_statement": scopeDownStatementSchema(level - 1),
+				"scope_down_statement": scopeDownStatementSchema(),
 			},
 		},
 	}
 }
 
-func scopeDownStatementSchema(level int) *schema.Schema {
+func scopeDownStatementSchema() *schema.Schema {
 	return &schema.Schema{
 		Type:     schema.TypeList,
 		Optional: true,
 		MaxItems: 1,
 		Elem: &schema.Resource{
 			Schema: map[string]*schema.Schema{
-				"and_statement":                         statementSchema(level),
+				"and_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
 				"byte_match_statement":                  byteMatchStatementSchema(),
 				"geo_match_statement":                   geoMatchStatementSchema(),
 				"label_match_statement":                 labelMatchStatementSchema(),
 				"ip_set_reference_statement":            ipSetReferenceStatementSchema(),
-				"not_statement":                         statementSchema(level),
-				"or_statement":                          statementSchema(level),
+				"not_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
+				"or_statement": {
+					Type:             schema.TypeString,
+					Optional:         true,
+					ValidateFunc:     validation.StringIsJSON,
+					DiffSuppressFunc: verify.SuppressEquivalentJSONDiffs,
+					StateFunc: func(v interface{}) string {
+						json, _ := structure.NormalizeJsonString(v)
+						return json
+					},
+				},
 				"regex_match_statement":                 regexMatchStatementSchema(),
 				"regex_pattern_set_reference_statement": regexPatternSetReferenceStatementSchema(),
 				"size_constraint_statement":             sizeConstraintSchema(),
