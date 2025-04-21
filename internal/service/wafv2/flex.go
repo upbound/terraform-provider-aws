@@ -4,6 +4,7 @@
 package wafv2
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -457,7 +458,13 @@ func expandStatement(m map[string]interface{}) *awstypes.Statement {
 	statement := &awstypes.Statement{}
 
 	if v, ok := m["and_statement"]; ok {
-		statement.AndStatement = expandAndStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var andStatement awstypes.AndStatement
+			json.Unmarshal([]byte(s), &andStatement)
+			statement.AndStatement = &andStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.AndStatement = expandAndStatement(v)
+		}
 	}
 
 	if v, ok := m["byte_match_statement"]; ok {
@@ -477,15 +484,33 @@ func expandStatement(m map[string]interface{}) *awstypes.Statement {
 	}
 
 	if v, ok := m["not_statement"]; ok {
-		statement.NotStatement = expandNotStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var notStatement awstypes.NotStatement
+			json.Unmarshal([]byte(s), &notStatement)
+			statement.NotStatement = &notStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.NotStatement = expandNotStatement(v)
+		}
 	}
 
 	if v, ok := m["or_statement"]; ok {
-		statement.OrStatement = expandOrStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var orStatement awstypes.OrStatement
+			json.Unmarshal([]byte(s), &orStatement)
+			statement.OrStatement = &orStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.OrStatement = expandOrStatement(v)
+		}
 	}
 
 	if v, ok := m["rate_based_statement"]; ok {
-		statement.RateBasedStatement = expandRateBasedStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var rateBasedStatement awstypes.RateBasedStatement
+			json.Unmarshal([]byte(s), &rateBasedStatement)
+			statement.RateBasedStatement = &rateBasedStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.RateBasedStatement = expandRateBasedStatement(v)
+		}
 	}
 
 	if v, ok := m["regex_match_statement"]; ok {
@@ -1157,7 +1182,13 @@ func expandWebACLStatement(m map[string]interface{}) *awstypes.Statement {
 	statement := &awstypes.Statement{}
 
 	if v, ok := m["and_statement"]; ok {
-		statement.AndStatement = expandAndStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var andStatement awstypes.AndStatement
+			json.Unmarshal([]byte(s), &andStatement)
+			statement.AndStatement = &andStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.AndStatement = expandAndStatement(v)
+		}
 	}
 
 	if v, ok := m["byte_match_statement"]; ok {
@@ -1177,19 +1208,43 @@ func expandWebACLStatement(m map[string]interface{}) *awstypes.Statement {
 	}
 
 	if v, ok := m["managed_rule_group_statement"]; ok {
-		statement.ManagedRuleGroupStatement = expandManagedRuleGroupStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var managedRuleGroupStatement awstypes.ManagedRuleGroupStatement
+			json.Unmarshal([]byte(s), &managedRuleGroupStatement)
+			statement.ManagedRuleGroupStatement = &managedRuleGroupStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.ManagedRuleGroupStatement = expandManagedRuleGroupStatement(v)
+		}
 	}
 
 	if v, ok := m["not_statement"]; ok {
-		statement.NotStatement = expandNotStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var notStatement awstypes.NotStatement
+			json.Unmarshal([]byte(s), &notStatement)
+			statement.NotStatement = &notStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.NotStatement = expandNotStatement(v)
+		}
 	}
 
 	if v, ok := m["or_statement"]; ok {
-		statement.OrStatement = expandOrStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var orStatement awstypes.OrStatement
+			json.Unmarshal([]byte(s), &orStatement)
+			statement.OrStatement = &orStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.OrStatement = expandOrStatement(v)
+		}
 	}
 
 	if v, ok := m["rate_based_statement"]; ok {
-		statement.RateBasedStatement = expandRateBasedStatement(v.([]interface{}))
+		if s, ok := v.(string); ok && s != "" {
+			var rateBasedStatement awstypes.RateBasedStatement
+			json.Unmarshal([]byte(s), &rateBasedStatement)
+			statement.RateBasedStatement = &rateBasedStatement
+		} else if v, ok := v.([]interface{}); ok {
+			statement.RateBasedStatement = expandRateBasedStatement(v)
+		}
 	}
 
 	if v, ok := m["regex_match_statement"]; ok {
@@ -1232,7 +1287,13 @@ func expandManagedRuleGroupStatement(l []interface{}) *awstypes.ManagedRuleGroup
 	}
 
 	if s, ok := m["scope_down_statement"].([]interface{}); ok && len(s) > 0 && s[0] != nil {
-		r.ScopeDownStatement = expandStatement(s[0].(map[string]interface{}))
+		if stringVal, ok := s[0].(string); ok && stringVal != "" {
+			var scopeDownStatement awstypes.Statement
+			json.Unmarshal([]byte(stringVal), &scopeDownStatement)
+			r.ScopeDownStatement = &scopeDownStatement
+		} else if mapVal, ok := s[0].(map[string]interface{}); ok {
+			r.ScopeDownStatement = expandStatement(mapVal)
+		}
 	}
 
 	if v, ok := m[names.AttrVersion]; ok && v != "" {
@@ -1663,9 +1724,14 @@ func expandRateBasedStatement(l []interface{}) *awstypes.RateBasedStatement {
 		r.CustomKeys = expandRateBasedStatementCustomKeys(v.([]interface{}))
 	}
 
-	s := m["scope_down_statement"].([]interface{})
-	if len(s) > 0 && s[0] != nil {
-		r.ScopeDownStatement = expandStatement(s[0].(map[string]interface{}))
+	if s, ok := m["scope_down_statement"].([]interface{}); ok && len(s) > 0 && s[0] != nil {
+		if stringVal, ok := s[0].(string); ok && stringVal != "" {
+			var scopeDownStatement awstypes.Statement
+			json.Unmarshal([]byte(stringVal), &scopeDownStatement)
+			r.ScopeDownStatement = &scopeDownStatement
+		} else if mapVal, ok := s[0].(map[string]interface{}); ok {
+			r.ScopeDownStatement = expandStatement(mapVal)
+		}
 	}
 
 	return r
@@ -2071,6 +2137,12 @@ func flattenAndStatement(a *awstypes.AndStatement) interface{} {
 		return []interface{}{}
 	}
 
+	jsonBytes, err := json.Marshal(a)
+	if err == nil {
+		return string(jsonBytes)
+	}
+
+	// Fallback to original implementation if JSON marshaling fails
 	m := map[string]interface{}{
 		"statement": flattenStatements(a.Statements),
 	}
@@ -2343,6 +2415,12 @@ func flattenNotStatement(a *awstypes.NotStatement) interface{} {
 		return []interface{}{}
 	}
 
+	jsonBytes, err := json.Marshal(a)
+	if err == nil {
+		return string(jsonBytes)
+	}
+
+	// Fallback to original implementation if JSON marshaling fails
 	m := map[string]interface{}{
 		"statement": []interface{}{flattenStatement(a.Statement)},
 	}
@@ -2355,6 +2433,12 @@ func flattenOrStatement(a *awstypes.OrStatement) interface{} {
 		return []interface{}{}
 	}
 
+	jsonBytes, err := json.Marshal(a)
+	if err == nil {
+		return string(jsonBytes)
+	}
+
+	// Fallback to original implementation if JSON marshaling fails
 	m := map[string]interface{}{
 		"statement": flattenStatements(a.Statements),
 	}
@@ -2631,6 +2715,12 @@ func flattenManagedRuleGroupStatement(apiObject *awstypes.ManagedRuleGroupStatem
 		return []interface{}{}
 	}
 
+	jsonBytes, err := json.Marshal(apiObject)
+	if err == nil {
+		return string(jsonBytes)
+	}
+
+	// Fallback to original implementation if JSON marshaling fails
 	tfMap := map[string]interface{}{}
 
 	if apiObject.Name != nil {
@@ -3046,25 +3136,28 @@ func flattenRateBasedStatement(apiObject *awstypes.RateBasedStatement) interface
 		return []interface{}{}
 	}
 
+	jsonBytes, err := json.Marshal(apiObject)
+	if err == nil {
+		return string(jsonBytes)
+	}
+
+	// Fallback to original implementation if JSON marshaling fails
 	tfMap := map[string]interface{}{
 		"aggregate_key_type":    apiObject.AggregateKeyType,
 		"evaluation_window_sec": apiObject.EvaluationWindowSec,
+		"limit":                 apiObject.Limit,
 	}
 
 	if apiObject.ForwardedIPConfig != nil {
 		tfMap["forwarded_ip_config"] = flattenForwardedIPConfig(apiObject.ForwardedIPConfig)
 	}
 
-	if apiObject.CustomKeys != nil {
-		tfMap["custom_key"] = flattenRateBasedStatementCustomKeys(apiObject.CustomKeys)
-	}
-
-	if apiObject.Limit != nil {
-		tfMap["limit"] = int(aws.ToInt64(apiObject.Limit))
-	}
-
 	if apiObject.ScopeDownStatement != nil {
 		tfMap["scope_down_statement"] = []interface{}{flattenStatement(apiObject.ScopeDownStatement)}
+	}
+
+	if apiObject.CustomKeys != nil {
+		tfMap["custom_key"] = flattenRateBasedStatementCustomKeys(apiObject.CustomKeys)
 	}
 
 	return []interface{}{tfMap}
