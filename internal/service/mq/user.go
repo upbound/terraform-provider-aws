@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/mq"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/mq/types"
-	"github.com/aws/aws-sdk-go/aws"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
