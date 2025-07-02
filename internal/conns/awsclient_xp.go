@@ -4,7 +4,6 @@
 package conns
 
 import (
-	session_sdkv1 "github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/smithy-go/middleware"
 )
 
@@ -15,8 +14,12 @@ func (c *AWSClient) AppendAPIOptions(options ...func(stack *middleware.Stack) er
 }
 
 // Session returns the associated session with this client.
-func (c *AWSClient) Session() *session_sdkv1.Session {
-	return c.session
+// DEPRECATED: This method is deprecated as AWS SDK v1 session is no longer available.
+// Use AppendAPIOptions for middleware functionality instead.
+func (c *AWSClient) Session() any {
+	// Return nil as session is not available in AWS SDK v2
+	// Crossplane provider should migrate to use AppendAPIOptions for metrics collection
+	return nil
 }
 
 // SetAccountID sets accountID of this client.
