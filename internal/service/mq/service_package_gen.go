@@ -27,8 +27,10 @@ func (p *servicePackage) FrameworkDataSources(ctx context.Context) []*inttypes.S
 func (p *servicePackage) FrameworkResources(ctx context.Context) []*inttypes.ServicePackageFrameworkResource {
 	return []*inttypes.ServicePackageFrameworkResource{
 		{
-			Factory: newResourceUser,
-			Name:    "User",
+			Factory:  newResourceUser,
+			TypeName: "aws_mq_user",
+			Name:     "User",
+			Region:   unique.Make(inttypes.ResourceRegionDefault()),
 		},
 	}
 }

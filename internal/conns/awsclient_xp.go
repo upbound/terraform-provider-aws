@@ -13,15 +13,6 @@ func (c *AWSClient) AppendAPIOptions(options ...func(stack *middleware.Stack) er
 	c.awsConfig.APIOptions = append(c.awsConfig.APIOptions, options...)
 }
 
-// Session returns the associated session with this client.
-// DEPRECATED: This method is deprecated as AWS SDK v1 session is no longer available.
-// Use AppendAPIOptions for middleware functionality instead.
-func (c *AWSClient) Session() any {
-	// Return nil as session is not available in AWS SDK v2
-	// Crossplane provider should migrate to use AppendAPIOptions for metrics collection
-	return nil
-}
-
 // SetAccountID sets accountID of this client.
 func (c *AWSClient) SetAccountID(accountID string) {
 	c.accountID = accountID

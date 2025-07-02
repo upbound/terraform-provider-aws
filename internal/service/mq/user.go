@@ -27,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/internal/errs"
 	"github.com/hashicorp/terraform-provider-aws/internal/framework"
 	"github.com/hashicorp/terraform-provider-aws/internal/framework/flex"
+	fwtypes "github.com/hashicorp/terraform-provider-aws/internal/framework/types"
 	"github.com/hashicorp/terraform-provider-aws/internal/tfresource"
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
@@ -40,7 +41,7 @@ func diagErrorFramework(service, action, resource, id string, gotError error) di
 	)
 }
 
-// @FrameworkResource(name="User")
+// @FrameworkResource("aws_mq_user", name="User")
 func newResourceUser(_ context.Context) (resource.ResourceWithConfigure, error) {
 	return &resourceUser{}, nil
 }
@@ -50,11 +51,7 @@ const (
 )
 
 type resourceUser struct {
-	framework.ResourceWithConfigure
-}
-
-func (r *resourceUser) Metadata(_ context.Context, _ resource.MetadataRequest, response *resource.MetadataResponse) {
-	response.TypeName = "aws_mq_user"
+	framework.ResourceWithModel[resourceUserData]
 }
 
 // Schema returns the schema for this resource.
@@ -71,6 +68,7 @@ func (r *resourceUser) Schema(ctx context.Context, request resource.SchemaReques
 				Optional: true,
 			},
 			"groups": schema.ListAttribute{
+				CustomType:  fwtypes.ListOfStringType,
 				ElementType: types.StringType,
 				Optional:    true,
 				PlanModifiers: []planmodifier.List{
@@ -260,11 +258,12 @@ func findUserByID(ctx context.Context, conn *mq.Client, brokerID string, id stri
 }
 
 type resourceUserData struct {
-	BrokerID      types.String `tfsdk:"broker_id"`
-	ConsoleAccess types.Bool   `tfsdk:"console_access"`
-	Groups        types.List   `tfsdk:"groups"`
-	ID            types.String `tfsdk:"id"`
-	Password      types.String `tfsdk:"password"`
+	framework.WithRegionModel
+	BrokerID      types.String         `tfsdk:"broker_id"`
+	ConsoleAccess types.Bool           `tfsdk:"console_access"`
+	Groups        fwtypes.ListOfString `tfsdk:"groups"`
+	ID            types.String         `tfsdk:"id"`
+	Password      types.String         `tfsdk:"password"`
 	// Pending         types.Object `tfsdk:"pending"`
 	ReplicationUser types.Bool   `tfsdk:"replication_user"`
 	Username        types.String `tfsdk:"username"`
@@ -277,7 +276,7 @@ func (rd *resourceUserData) refreshFromOutput(ctx context.Context, out *mq.Descr
 
 	rd.BrokerID = flex.StringToFramework(ctx, out.BrokerId)
 	rd.ConsoleAccess = flex.BoolToFramework(ctx, out.ConsoleAccess)
-	rd.Groups = flex.FlattenFrameworkStringValueList(ctx, out.Groups)
+	rd.Groups = flex.FlattenFrameworkStringValueListOfString(ctx, out.Groups)
 	rd.ReplicationUser = flex.BoolToFramework(ctx, out.ReplicationUser)
 	rd.Username = flex.StringToFramework(ctx, out.Username)
 	rd.ID = rd.Username
