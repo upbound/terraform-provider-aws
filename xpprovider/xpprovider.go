@@ -14,8 +14,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
-	"github.com/hashicorp/terraform-provider-aws/internal/provider"
-	internalfwprovider "github.com/hashicorp/terraform-provider-aws/internal/provider/fwprovider"
+	internalfwprovider "github.com/hashicorp/terraform-provider-aws/internal/provider/framework"
+	provider "github.com/hashicorp/terraform-provider-aws/internal/provider/sdkv2"
 )
 
 // AWSConfig exports the internal type conns.Config of the Terraform provider
@@ -28,17 +28,20 @@ type AWSClient = conns.AWSClient
 // and Terraform Plugin SDKv2 provider of type *schema.Provider
 // provider
 func GetProvider(ctx context.Context) (fwprovider.Provider, *schema.Provider, error) {
-	p, err := provider.New(ctx)
+	p, err := provider.NewProvider(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	fwProvider := internalfwprovider.New(p)
-	return fwProvider, p, err
+	fwProvider, err := internalfwprovider.NewProvider(ctx, p)
+	if err != nil {
+		return nil, nil, err
+	}
+	return fwProvider, p, nil
 }
 
 // GetProviderSchema returns the Terraform Plugin SDKv2 provider schema of the provider
 func GetProviderSchema(ctx context.Context) (*schema.Provider, error) {
-	return provider.New(ctx)
+	return provider.NewProvider(ctx)
 }
 
 // GetFrameworkProviderSchema returns the Terraform Plugin Framework provider schema of the provider
@@ -58,7 +61,9 @@ func GetFrameworkProviderSchema(ctx context.Context) (fwschema.Schema, error) {
 // of type *conns.AWSClient
 // Can be used to create provider instances with arbitrary AWS clients.
 func GetFrameworkProviderWithMeta(primary interface{ Meta() interface{} }) fwprovider.Provider {
-	return internalfwprovider.New(primary)
+	// Note: This function should handle the error from NewProvider, but keeping the original signature for compatibility
+	fwProvider, _ := internalfwprovider.NewProvider(context.Background(), primary)
+	return fwProvider
 }
 
 // GetClient configures the supplied provider meta (in the *AWSClient). It is a wrapper function that exports
