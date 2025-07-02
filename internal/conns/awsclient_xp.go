@@ -26,3 +26,13 @@ func (c *AWSClient) Session() any {
 func (c *AWSClient) SetAccountID(accountID string) {
 	c.accountID = accountID
 }
+
+// GetServicePackages returns the servicePackages map for backward compatibility.
+func (c *AWSClient) GetServicePackages() map[string]ServicePackage {
+	return c.servicePackages
+}
+
+// SetServicePackagesField sets the servicePackages field directly for backward compatibility.
+func (c *AWSClient) SetServicePackagesField(servicePackages map[string]ServicePackage) {
+	c.servicePackages = servicePackages
+}
