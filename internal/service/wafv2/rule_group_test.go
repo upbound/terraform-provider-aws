@@ -2678,37 +2678,6 @@ func TestAccWAFV2RuleGroup_rateBasedStatement_ASNMatchStatement(t *testing.T) {
 	})
 }
 
-func TestAccWAFV2RuleGroup_rulesJSON(t *testing.T) {
-	ctx := acctest.Context(t)
-	var v awstypes.RuleGroup
-	ruleGroupName := acctest.RandomWithPrefix(t, acctest.ResourcePrefix)
-	resourceName := "aws_wafv2_rule_group.test"
-
-	acctest.ParallelTest(ctx, t, resource.TestCase{
-		PreCheck:                 func() { acctest.PreCheck(ctx, t); testAccPreCheckScopeRegional(ctx, t) },
-		ErrorCheck:               acctest.ErrorCheck(t, names.WAFV2ServiceID),
-		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
-		CheckDestroy:             testAccCheckRuleGroupDestroy(ctx, t),
-		Steps: []resource.TestStep{
-			{
-				Config: testAccRuleGroupConfig_rulesJSON(ruleGroupName),
-				Check: resource.ComposeTestCheckFunc(
-					testAccCheckRuleGroupExists(ctx, t, resourceName, &v),
-					acctest.MatchResourceAttrRegionalARN(ctx, resourceName, names.AttrARN, "wafv2", regexache.MustCompile(`regional/rulegroup/.+$`)),
-					resource.TestCheckResourceAttrSet(resourceName, "rules_json"),
-				),
-			},
-			{
-				ResourceName:            resourceName,
-				ImportState:             true,
-				ImportStateVerify:       true,
-				ImportStateVerifyIgnore: []string{"rules_json", names.AttrRule},
-				ImportStateIdFunc:       testAccRuleGroupImportStateIdFunc(resourceName),
-			},
-		},
-	})
-}
-
 func TestAccWAFV2RuleGroup_monetize(t *testing.T) {
 	ctx := acctest.Context(t)
 	var v awstypes.RuleGroup
@@ -5889,49 +5858,6 @@ resource "aws_wafv2_rule_group" "test" {
 }
 `, rName)
 }
-
-func testAccRuleGroupConfig_rulesJSON(rName string) string {
-	return fmt.Sprintf(`
-resource "aws_wafv2_rule_group" "test" {
-  capacity = 100
-  name     = %[1]q
-  scope    = "REGIONAL"
-
-  rules_json = jsonencode([{
-    Name     = "rule-1"
-    Priority = 1
-    Action = {
-      Count = {}
-    }
-    Statement = {
-      ByteMatchStatement = {
-        SearchString = "badbot"
-        FieldToMatch = {
-          UriPath = {}
-        }
-        TextTransformations = [{
-          Priority = 1
-          Type     = "NONE"
-        }]
-        PositionalConstraint = "CONTAINS"
-      }
-    }
-    VisibilityConfig = {
-      CloudwatchMetricsEnabled = false
-      MetricName               = "friendly-rule-metric-name"
-      SampledRequestsEnabled   = false
-    }
-  }])
-
-  visibility_config {
-    cloudwatch_metrics_enabled = false
-    metric_name                = "friendly-metric-name"
-    sampled_requests_enabled   = false
-  }
-}
-`, rName)
-}
-
 func testAccRuleGroupConfig_monetize(rName string) string {
 	return fmt.Sprintf(`
 resource "aws_wafv2_rule_group" "test" {
