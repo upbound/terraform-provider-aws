@@ -6,6 +6,7 @@ package mq
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -22,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
 	"github.com/hashicorp/terraform-provider-aws/internal/create"
 	"github.com/hashicorp/terraform-provider-aws/internal/errs"
@@ -62,36 +65,75 @@ func (r *resourceUser) Schema(ctx context.Context, request resource.SchemaReques
 	response.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"broker_id": schema.StringAttribute{
-				Required: true,
+				Required:    true,
+				Description: "The ID of the broker where the user will be created.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"console_access": schema.BoolAttribute{
-				Optional: true,
+				Optional:    true,
+				Description: "Whether to enable console access for the user.",
+				PlanModifiers: []planmodifier.Bool{
+					&consoleAccessPlanModifier{},
+				},
 			},
 			"groups": schema.ListAttribute{
 				ElementType: types.StringType,
 				Optional:    true,
+				Description: "List of groups to which the user belongs.",
 				PlanModifiers: []planmodifier.List{
-					listSortModifier{},
+					&listSortModifier{},
+					&groupsPlanModifier{},
 				},
 			},
 			"id": framework.IDAttribute(),
 			"password": schema.StringAttribute{
-				Required:  true,
-				Sensitive: true,
+				Required:    true,
+				Sensitive:   true,
+				Description: "The password for the user. Must be at least 12 characters long.",
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(12),
 				},
 			},
 			"replication_user": schema.BoolAttribute{
-				Optional: true,
+				Optional:    true,
+				Description: "Whether the user is a replication user.",
 			},
 			"username": schema.StringAttribute{
-				Required: true,
+				Required:    true,
+				Description: "The username for the MQ user.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+		},
+		Blocks: map[string]schema.Block{
+			// Pending changes information returned by the AWS API. This is a
+			// computed-only attribute that tracks pending modifications to
+			// the user.
+			"pending": schema.SingleNestedBlock{
+				Description: "Tracks pending modifications returned by the AWS MQ API. This field allows you to monitor changes that are actively being processed before they are fully applied.",
+				Attributes: map[string]schema.Attribute{
+					"pending_change": schema.StringAttribute{
+						Computed:    true,
+						Optional:    false,
+						Description: "The type of pending change. Valid values are CREATE, UPDATE, or DELETE.",
+					},
+					"console_access": schema.BoolAttribute{
+						Computed:    true,
+						Optional:    false,
+						Description: "The pending console access value if a change to console access is being processed.",
+					},
+					"groups": schema.ListAttribute{
+						ElementType: types.StringType,
+						Computed:    true,
+						Optional:    false,
+						Description: "The pending groups value if a change to groups is being processed.",
+						PlanModifiers: []planmodifier.List{
+							&listSortModifier{},
+						},
+					},
 				},
 			},
 		},
@@ -129,8 +171,8 @@ func (r *resourceUser) Create(ctx context.Context, request resource.CreateReques
 	}
 
 	state := plan
-	state.refreshFromOutput(ctx, userDetails)
 
+	response.Diagnostics.Append(state.refreshFromOutput(ctx, userDetails)...)
 	response.Diagnostics.Append(response.State.Set(ctx, state)...)
 }
 
@@ -154,7 +196,7 @@ func (r *resourceUser) Read(ctx context.Context, request resource.ReadRequest, r
 		return
 	}
 
-	state.refreshFromOutput(ctx, userDetails)
+	response.Diagnostics.Append(state.refreshFromOutput(ctx, userDetails)...)
 	response.Diagnostics.Append(response.State.Set(ctx, &state)...)
 }
 
@@ -259,20 +301,30 @@ func findUserByID(ctx context.Context, conn *mq.Client, brokerID string, id stri
 	return output, nil
 }
 
+// resourceUserData represents the Terraform resource model for an MQ user.
 type resourceUserData struct {
-	BrokerID      types.String `tfsdk:"broker_id"`
-	ConsoleAccess types.Bool   `tfsdk:"console_access"`
-	Groups        types.List   `tfsdk:"groups"`
-	ID            types.String `tfsdk:"id"`
-	Password      types.String `tfsdk:"password"`
-	// Pending         types.Object `tfsdk:"pending"`
+	BrokerID        types.String `tfsdk:"broker_id"`
+	ConsoleAccess   types.Bool   `tfsdk:"console_access"`
+	Groups          types.List   `tfsdk:"groups"`
+	ID              types.String `tfsdk:"id"`
+	Password        types.String `tfsdk:"password"`
 	ReplicationUser types.Bool   `tfsdk:"replication_user"`
 	Username        types.String `tfsdk:"username"`
+	Pending         types.Object `tfsdk:"pending"` // Computed-only field tracking pending AWS changes
 }
 
-func (rd *resourceUserData) refreshFromOutput(ctx context.Context, out *mq.DescribeUserOutput) {
+// pendingModel represents pending changes to an MQ user returned by the AWS API.
+// This information is populated when modifications are queued but not yet applied.
+type pendingModel struct {
+	ConsoleAccess types.Bool   `tfsdk:"console_access"`
+	PendingChange types.String `tfsdk:"pending_change"`
+	Groups        types.List   `tfsdk:"groups"`
+}
+
+// refreshFromOutput populates the resource data from the AWS API response.
+func (rd *resourceUserData) refreshFromOutput(ctx context.Context, out *mq.DescribeUserOutput) diag.Diagnostics {
 	if out == nil {
-		return
+		return nil
 	}
 
 	rd.BrokerID = flex.StringToFramework(ctx, out.BrokerId)
@@ -281,8 +333,51 @@ func (rd *resourceUserData) refreshFromOutput(ctx context.Context, out *mq.Descr
 	rd.ReplicationUser = flex.BoolToFramework(ctx, out.ReplicationUser)
 	rd.Username = flex.StringToFramework(ctx, out.Username)
 	rd.ID = rd.Username
+
+	// Populate the pending attribute with data from the AWS API response.
+	// If there are pending changes, populate with actual values; otherwise use
+	// an empty struct.
+	if out.Pending != nil {
+		p, d := flattenPending(ctx, out.Pending)
+		if d.HasError() {
+			return d
+		}
+		rd.Pending = p
+	} else {
+		// Initialize with empty values when no pending changes exist.
+		attributeTypes := map[string]attr.Type{
+			"console_access": types.BoolType,
+			"pending_change": types.StringType,
+			"groups":         types.ListType{ElemType: types.StringType},
+		}
+		rd.Pending = types.ObjectNull(attributeTypes)
+	}
+	return nil
 }
 
+// flattenPending converts AWS API pending changes to a Terraform object value.
+func flattenPending(ctx context.Context, out *awstypes.UserPendingChanges) (types.Object, diag.Diagnostics) {
+	// Create attribute types map manually to match schema
+	attributeTypes := map[string]attr.Type{
+		"console_access": types.BoolType,
+		"pending_change": types.StringType,
+		"groups":         types.ListType{ElemType: types.StringType},
+	}
+
+	if out == nil {
+		return types.ObjectNull(attributeTypes), nil
+	}
+
+	attrs := map[string]attr.Value{
+		"pending_change": types.StringValue(string(out.PendingChange)),
+		"console_access": flex.BoolToFramework(ctx, out.ConsoleAccess),
+		"groups":         flex.FlattenFrameworkStringValueList(ctx, out.Groups),
+	}
+
+	return types.ObjectValue(attributeTypes, attrs)
+}
+
+// userHasChanges determines if the plan contains changes compared to the current state.
 func userHasChanges(plan, state resourceUserData) bool {
 	return !plan.ConsoleAccess.Equal(state.ConsoleAccess) ||
 		!plan.Groups.Equal(state.Groups) ||
@@ -293,7 +388,7 @@ func userHasChanges(plan, state resourceUserData) bool {
 // Custom Plan Modifier: Sorts list items
 type listSortModifier struct{}
 
-func (m listSortModifier) PlanModifyList(ctx context.Context, req planmodifier.ListRequest, resp *planmodifier.ListResponse) {
+func (m *listSortModifier) PlanModifyList(ctx context.Context, req planmodifier.ListRequest, resp *planmodifier.ListResponse) {
 	// Get plan value
 	planValue := req.PlanValue
 
@@ -322,10 +417,87 @@ func (m listSortModifier) PlanModifyList(ctx context.Context, req planmodifier.L
 	resp.PlanValue = sortedList
 }
 
-func (m listSortModifier) Description(ctx context.Context) string {
+func (m *listSortModifier) Description(ctx context.Context) string {
 	return "Sorts the list elements alphabetically."
 }
 
-func (m listSortModifier) MarkdownDescription(ctx context.Context) string {
+func (m *listSortModifier) MarkdownDescription(ctx context.Context) string {
 	return "Sorts the list elements alphabetically."
+}
+
+// consoleAccessPlanModifier prevents unnecessary updates when the planned
+// console_access value matches a pending change in AWS. This avoids triggering
+// an update when the change is already queued on the AWS side, keeping the
+// current state value instead.
+type consoleAccessPlanModifier struct{}
+
+func (c *consoleAccessPlanModifier) PlanModifyBool(ctx context.Context, req planmodifier.BoolRequest, resp *planmodifier.BoolResponse) {
+	var state *resourceUserData
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if state == nil || state.Pending.IsNull() {
+		return
+	}
+
+	var pm pendingModel
+	resp.Diagnostics.Append(state.Pending.As(ctx, &pm, basetypes.ObjectAsOptions{})...)
+
+	consoleAccessValue := req.PlanValue
+	// If the planned value matches the pending console_access, keep the current
+	// state value to avoid an unnecessary update operation.
+	if !pm.ConsoleAccess.IsNull() && !pm.ConsoleAccess.IsUnknown() && pm.ConsoleAccess.Equal(consoleAccessValue) {
+		resp.PlanValue = req.StateValue
+	}
+}
+
+func (c *consoleAccessPlanModifier) Description(_ context.Context) string {
+	return "Prevents unnecessary updates when the planned console_access value matches a pending change in AWS."
+}
+
+func (c *consoleAccessPlanModifier) MarkdownDescription(_ context.Context) string {
+	return "Prevents unnecessary updates when the planned `console_access` value matches a pending change in AWS."
+}
+
+// groupsPlanModifier prevents unnecessary updates when the planned groups value
+// matches a pending change in AWS. This avoids triggering an update when the
+// change is already queued on the AWS side, keeping the current state value instead.
+type groupsPlanModifier struct{}
+
+func (g *groupsPlanModifier) PlanModifyList(ctx context.Context, req planmodifier.ListRequest, resp *planmodifier.ListResponse) {
+	var state *resourceUserData
+
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if state == nil || state.Pending.IsNull() {
+		return
+	}
+	var pm pendingModel
+	resp.Diagnostics.Append(state.Pending.As(ctx, &pm, basetypes.ObjectAsOptions{})...)
+	if !pm.Groups.IsNull() && !pm.Groups.IsUnknown() && !req.PlanValue.IsNull() && !req.PlanValue.IsUnknown() {
+		var pendingGroups []string
+		resp.Diagnostics.Append(pm.Groups.ElementsAs(ctx, &pendingGroups, false)...)
+
+		var planGroups []string
+		resp.Diagnostics.Append(req.PlanValue.ElementsAs(ctx, &planGroups, false)...)
+
+		sort.Strings(pendingGroups)
+		sort.Strings(planGroups)
+
+		if slices.Equal(planGroups, pendingGroups) {
+			resp.PlanValue = req.StateValue
+		}
+	}
+}
+
+func (g *groupsPlanModifier) Description(_ context.Context) string {
+	return "Prevents unnecessary updates when the planned groups value matches a pending change in AWS."
+}
+
+func (g *groupsPlanModifier) MarkdownDescription(_ context.Context) string {
+	return "Prevents unnecessary updates when the planned `groups` value matches a pending change in AWS."
 }
