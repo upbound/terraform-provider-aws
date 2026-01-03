@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/rds"
+	rdstypes "github.com/aws/aws-sdk-go-v2/service/rds/types"
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -19,6 +20,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
+
 	"github.com/hashicorp/terraform-provider-aws/internal/create"
 	"github.com/hashicorp/terraform-provider-aws/internal/framework"
 	"github.com/hashicorp/terraform-provider-aws/internal/framework/flex"
@@ -86,7 +89,7 @@ func (r *resourceInstanceState) Create(ctx context.Context, req resource.CreateR
 
 	instanceID := plan.Identifier.ValueString()
 
-	instance, err := waitDBInstanceAvailable(ctx, conn, instanceID, r.CreateTimeout(ctx, plan.Timeouts))
+	instance, err := waitDBInstanceReadyForStateChange(ctx, conn, instanceID, r.CreateTimeout(ctx, plan.Timeouts))
 	if err != nil {
 		resp.Diagnostics.AddError(fmt.Sprintf("waiting for RDS Instance (%s)", instanceID), err.Error())
 
@@ -139,7 +142,7 @@ func (r *resourceInstanceState) Update(ctx context.Context, req resource.UpdateR
 		return
 	}
 
-	if _, err := waitDBInstanceAvailable(ctx, conn, state.Identifier.ValueString(), r.UpdateTimeout(ctx, plan.Timeouts)); err != nil {
+	if _, err := waitDBInstanceReadyForStateChange(ctx, conn, state.Identifier.ValueString(), r.UpdateTimeout(ctx, plan.Timeouts)); err != nil {
 		resp.Diagnostics.AddError(fmt.Sprintf("waiting for RDS Instance (%s)", state.Identifier.ValueString()), err.Error())
 
 		return
@@ -182,4 +185,47 @@ type resourceInstanceStateData struct {
 	Identifier types.String   `tfsdk:"identifier"`
 	State      types.String   `tfsdk:"state"`
 	Timeouts   timeouts.Value `tfsdk:"timeouts"`
+}
+
+func waitDBInstanceReadyForStateChange(ctx context.Context, conn *rds.Client, id string, timeout time.Duration, optFns ...tfresource.OptionsFunc) (*rdstypes.DBInstance, error) {
+	options := tfresource.Options{
+		PollInterval:              10 * time.Second,
+		Delay:                     1 * time.Minute,
+		ContinuousTargetOccurence: 3,
+	}
+	for _, fn := range optFns {
+		fn(&options)
+	}
+
+	stateConf := &retry.StateChangeConf{
+		Pending: []string{
+			instanceStatusBackingUp,
+			instanceStatusConfiguringEnhancedMonitoring,
+			instanceStatusConfiguringIAMDatabaseAuth,
+			instanceStatusConfiguringLogExports,
+			instanceStatusCreating,
+			instanceStatusMaintenance,
+			instanceStatusModifying,
+			instanceStatusMovingToVPC,
+			instanceStatusRebooting,
+			instanceStatusRenaming,
+			instanceStatusResettingMasterCredentials,
+			instanceStatusStarting,
+			instanceStatusStopping,
+			instanceStatusStorageFull,
+			instanceStatusUpgrading,
+		},
+		Target:  []string{instanceStatusStopped, instanceStatusAvailable, instanceStatusStorageOptimization},
+		Refresh: statusDBInstance(ctx, conn, id),
+		Timeout: timeout,
+	}
+	options.Apply(stateConf)
+
+	outputRaw, err := stateConf.WaitForStateContext(ctx)
+
+	if output, ok := outputRaw.(*rdstypes.DBInstance); ok {
+		return output, err
+	}
+
+	return nil, err
 }
