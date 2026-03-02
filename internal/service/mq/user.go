@@ -293,7 +293,7 @@ func findUserByID(ctx context.Context, conn *mq.Client, brokerID string, id stri
 		return nil, err
 	}
 	if output == nil {
-		return nil, tfresource.NewEmptyResultError(input)
+		return nil, tfresource.NewEmptyResultError()
 	}
 
 	return output, nil
