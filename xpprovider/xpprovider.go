@@ -13,6 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 
+	"github.com/hashicorp/terraform-provider-aws/internal"
 	"github.com/hashicorp/terraform-provider-aws/internal/conns"
 	internalfwprovider "github.com/hashicorp/terraform-provider-aws/internal/provider/framework"
 	provider "github.com/hashicorp/terraform-provider-aws/internal/provider/sdkv2"
@@ -28,6 +29,7 @@ type AWSClient = conns.AWSClient
 // and Terraform Plugin SDKv2 provider of type *schema.Provider
 // provider
 func GetProvider(ctx context.Context) (fwprovider.Provider, *schema.Provider, error) {
+	internal.RegisterSmarterrFS()
 	p, err := provider.NewProvider(ctx)
 	if err != nil {
 		return nil, nil, err
