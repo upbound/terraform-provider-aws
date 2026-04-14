@@ -187,10 +187,11 @@ func resourceTable() *schema.Resource {
 					Elem: &schema.Resource{
 						Schema: map[string]*schema.Schema{
 							"hash_key": {
-								Type:       schema.TypeString,
-								Optional:   true,
-								Computed:   true,
-								Deprecated: "hash_key is deprecated. Use key_schema instead.",
+								Type:         schema.TypeString,
+								Optional:     true,
+								Computed:     true,
+								Deprecated:   "hash_key is deprecated. Use key_schema instead.",
+								ValidateFunc: validation.StringIsNotEmpty,
 							},
 							"key_schema": {
 								Type:     schema.TypeList,
@@ -199,8 +200,9 @@ func resourceTable() *schema.Resource {
 								Elem: &schema.Resource{
 									Schema: map[string]*schema.Schema{
 										"attribute_name": {
-											Type:     schema.TypeString,
-											Required: true,
+											Type:         schema.TypeString,
+											Required:     true,
+											ValidateFunc: validation.StringIsNotEmpty,
 										},
 										"key_type": {
 											Type:             schema.TypeString,
@@ -226,9 +228,10 @@ func resourceTable() *schema.Resource {
 								ValidateDiagFunc: enum.Validate[awstypes.ProjectionType](),
 							},
 							"range_key": {
-								Type:       schema.TypeString,
-								Optional:   true,
-								Deprecated: "range_key is deprecated. Use key_schema instead.",
+								Type:             schema.TypeString,
+								Optional:         true,
+								Deprecated:       "range_key is deprecated. Use key_schema instead.",
+								ValidateDiagFunc: verify.WarnStringIsNotEmpty,
 							},
 							"read_capacity": {
 								Type:     schema.TypeInt,
@@ -3201,7 +3204,7 @@ func validateTableAttributes(ctx context.Context, d *schema.ResourceDiff, meta a
 					indexedAttributes[hashKey.AsString()] = true
 				}
 				rangeKey := v.GetAttr("range_key")
-				if rangeKey.IsKnown() && !rangeKey.IsNull() {
+				if rangeKey.IsKnown() && !rangeKey.IsNull() && rangeKey.AsString() != "" {
 					indexedAttributes[rangeKey.AsString()] = true
 				}
 				keySchema := v.GetAttr("key_schema")
