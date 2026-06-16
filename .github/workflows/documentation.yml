@@ -18,7 +18,7 @@ jobs:
       UV_THREADPOOL_SIZE: 128
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
-      - uses: YakDriver/md-check-links@7450f426b758f0bf97f99ceb1aadcf57640a9ede # v2.0.6
+      - uses: YakDriver/md-check-links@0a295ce2e08c544aae01cccc9b4c6801a8398942 # v2.2.0
         with:
           use-quiet-mode: 'yes'
           use-verbose-mode: 'yes'
