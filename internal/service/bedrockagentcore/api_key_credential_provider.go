@@ -72,6 +72,7 @@ func (r *apiKeyCredentialProviderResource) Schema(ctx context.Context, request r
 						path.MatchRoot("api_key"),
 						path.MatchRoot("api_key_secret_config"),
 						path.MatchRoot("api_key_wo"),
+						path.MatchRoot("api_key_secret_config"),
 					),
 					stringvalidator.ConflictsWith(
 						path.MatchRoot("api_key_wo"),
@@ -358,4 +359,9 @@ type apiKeyCredentialProviderResourceModel struct {
 
 type secretModel struct {
 	SecretARN fwtypes.ARN `tfsdk:"secret_arn"`
+}
+
+type secretReferenceModel struct {
+	SecretID types.String `tfsdk:"secret_id"`
+	JSONKey  types.String `tfsdk:"json_key"`
 }
