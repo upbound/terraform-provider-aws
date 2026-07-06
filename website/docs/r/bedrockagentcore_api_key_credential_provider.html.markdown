@@ -70,10 +70,10 @@ The following arguments are optional:
 * `json_key` - (Required) JSON key used to extract the secret value from the AWS Secrets Manager secret.
 * `secret_id` - (Required) ID of the AWS Secrets Manager secret that stores the secret value.
 
-**External Secret:**
+**Customer-Managed Secret:**
 
-* `api_key_secret_source` - (Optional) Source of the secret backing the credential provider. Valid values are `MANAGED` (AgentCore creates and manages the secret from the supplied `api_key`) and `EXTERNAL` (the provider references an existing AWS Secrets Manager secret via `api_key_secret_config`).
-* `api_key_secret_config` - (Optional) Reference to an existing AWS Secrets Manager secret that stores the API key. Used with `api_key_secret_source = "EXTERNAL"`. [See below](#api_key_secret_config).
+* `api_key_secret_source` - (Optional) Source of the secret backing the credential provider. Valid values are `MANAGED` (AgentCore creates and manages the secret from the supplied `api_key`) and `EXTERNAL` (the provider references a customer-managed AWS Secrets Manager secret via `api_key_secret_config`).
+* `api_key_secret_config` - (Optional) Reference to a customer-managed AWS Secrets Manager secret that stores the API key. Used with `api_key_secret_source = "EXTERNAL"`. [See below](#api_key_secret_config).
 
 ### api_key_secret_config
 
