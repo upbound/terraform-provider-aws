@@ -33,9 +33,9 @@ resource "aws_bedrockagentcore_api_key_credential_provider" "example" {
 }
 ```
 
-### External Secret
+### Customer-Managed Secret
 
-Reference an API key already stored in an existing AWS Secrets Manager secret instead of having AgentCore create and manage one.
+Reference an API key already stored in a customer-managed AWS Secrets Manager secret instead of having AgentCore create and manage one.
 
 ```terraform
 resource "aws_bedrockagentcore_api_key_credential_provider" "example" {
@@ -69,10 +69,10 @@ The following arguments are optional:
 * `api_key_wo` - (Optional, Write-Only) Write-only API key value. Conflicts with `api_key`. If set, requires `api_key_wo_version` to be set.
 * `api_key_wo_version` - (Optional) Required when `api_key_wo` is set. Changing this value triggers an update to `api_key_wo`.
 
-**External Secret:**
+**Customer-Managed Secret:**
 
-* `api_key_secret_source` - (Optional) Source of the secret backing the credential provider. Valid values are `MANAGED` (AgentCore creates and manages the secret from the supplied `api_key`) and `EXTERNAL` (the provider references an existing AWS Secrets Manager secret via `api_key_secret_config`).
-* `api_key_secret_config` - (Optional) Reference to an existing AWS Secrets Manager secret that stores the API key. Used with `api_key_secret_source = "EXTERNAL"`. [See below](#api_key_secret_config).
+* `api_key_secret_source` - (Optional) Source of the secret backing the credential provider. Valid values are `MANAGED` (AgentCore creates and manages the secret from the supplied `api_key`) and `EXTERNAL` (the provider references a customer-managed AWS Secrets Manager secret via `api_key_secret_config`).
+* `api_key_secret_config` - (Optional) Reference to a customer-managed AWS Secrets Manager secret that stores the API key. Used with `api_key_secret_source = "EXTERNAL"`. [See below](#api_key_secret_config).
 
 ### api_key_secret_config
 
