@@ -383,6 +383,30 @@ func TestAccBedrockAgentCoreAPIKeyCredentialProvider_switchSecretSource(t *testi
 	})
 }
 
+func TestAccBedrockAgentCoreAPIKeyCredentialProvider_secretSourceValidation(t *testing.T) {
+	ctx := acctest.Context(t)
+	rName := acctest.RandomWithPrefix(t, acctest.ResourcePrefix)
+
+	acctest.ParallelTest(ctx, t, resource.TestCase{
+		PreCheck: func() {
+			acctest.PreCheck(ctx, t)
+			acctest.PreCheckPartitionHasService(t, names.BedrockEndpointID)
+		},
+		ErrorCheck:               acctest.ErrorCheck(t, names.BedrockAgentCoreServiceID),
+		ProtoV5ProviderFactories: acctest.ProtoV5ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config:      testAccAPIKeyCredentialProviderConfig_apiKeyWithExternalSource(rName),
+				ExpectError: regexache.MustCompile(`Attribute\s+"api_key"\s+cannot\s+be\s+specified\s+when\s+"api_key_secret_source"\s+is\s+"EXTERNAL"`),
+			},
+			{
+				Config:      testAccAPIKeyCredentialProviderConfig_secretConfigWithManagedSource(rName),
+				ExpectError: regexache.MustCompile(`Attribute\s+"api_key_secret_config"\s+cannot\s+be\s+specified\s+when\s+"api_key_secret_source"\s+is\s+"MANAGED"`),
+			},
+		},
+	})
+}
+
 func testAccCheckAPIKeyCredentialProviderDestroy(ctx context.Context, t *testing.T) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		conn := acctest.ProviderMeta(ctx, t).BedrockAgentCoreClient(ctx)
@@ -441,4 +465,28 @@ func testAccPreCheckAPIKeyCredentialProviders(ctx context.Context, t *testing.T)
 	if err != nil {
 		t.Fatalf("unexpected PreCheck error: %s", err)
 	}
+}
+
+func testAccAPIKeyCredentialProviderConfig_apiKeyWithExternalSource(rName string) string {
+	return fmt.Sprintf(`
+resource "aws_bedrockagentcore_api_key_credential_provider" "test" {
+  name                  = %[1]q
+  api_key               = "some-api-key"
+  api_key_secret_source = "EXTERNAL"
+}
+`, rName)
+}
+
+func testAccAPIKeyCredentialProviderConfig_secretConfigWithManagedSource(rName string) string {
+	return fmt.Sprintf(`
+resource "aws_bedrockagentcore_api_key_credential_provider" "test" {
+  name                  = %[1]q
+  api_key_secret_source = "MANAGED"
+
+  api_key_secret_config {
+    secret_id = "dummy-secret-id"
+    json_key  = "apiKey"
+  }
+}
+`, rName)
 }

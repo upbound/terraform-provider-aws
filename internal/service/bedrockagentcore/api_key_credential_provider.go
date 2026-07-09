@@ -315,6 +315,35 @@ func (r *apiKeyCredentialProviderResource) ModifyPlan(ctx context.Context, reque
 	}
 }
 
+func (r *apiKeyCredentialProviderResource) ValidateConfig(ctx context.Context, request resource.ValidateConfigRequest, response *resource.ValidateConfigResponse) {
+	var data apiKeyCredentialProviderResourceModel
+	smerr.AddEnrich(ctx, &response.Diagnostics, request.Config.Get(ctx, &data))
+	if response.Diagnostics.HasError() {
+		return
+	}
+
+	if data.APIKeySecretSource.IsUnknown() || data.APIKeySecretSource.IsNull() {
+		return
+	}
+
+	switch data.APIKeySecretSource.ValueEnum() {
+	case awstypes.SecretSourceTypeExternal:
+		if !data.APIKey.IsNull() {
+			response.Diagnostics.Append(fwdiag.NewAttributeConflictsWhenError(path.Root("api_key"), path.Root("api_key_secret_source"), string(awstypes.SecretSourceTypeExternal)))
+		}
+		if !data.APIKeyWO.IsNull() {
+			response.Diagnostics.Append(fwdiag.NewAttributeConflictsWhenError(path.Root("api_key_wo"), path.Root("api_key_secret_source"), string(awstypes.SecretSourceTypeExternal)))
+		}
+		if data.APIKeySecretConfig.IsNull() {
+			response.Diagnostics.Append(fwdiag.NewAttributeRequiredWhenError(path.Root("api_key_secret_config"), path.Root("api_key_secret_source"), string(awstypes.SecretSourceTypeExternal)))
+		}
+	case awstypes.SecretSourceTypeManaged:
+		if !data.APIKeySecretConfig.IsNull() {
+			response.Diagnostics.Append(fwdiag.NewAttributeConflictsWhenError(path.Root("api_key_secret_config"), path.Root("api_key_secret_source"), string(awstypes.SecretSourceTypeManaged)))
+		}
+	}
+}
+
 func findAPIKeyCredentialProviderByName(ctx context.Context, conn *bedrockagentcorecontrol.Client, name string) (*bedrockagentcorecontrol.GetApiKeyCredentialProviderOutput, error) {
 	input := bedrockagentcorecontrol.GetApiKeyCredentialProviderInput{
 		Name: aws.String(name),
