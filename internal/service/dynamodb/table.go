@@ -3219,12 +3219,21 @@ func validateTableAttributes(ctx context.Context, d *schema.ResourceDiff, meta a
 		}
 	}
 
-	// schema.ResourceDiff.GetOk() has a bug when retrieving a list inside a set
-	planRaw := d.GetRawPlan()
-	if planRaw.IsKnown() && !planRaw.IsNull() {
-		planGSI := planRaw.GetAttr("global_secondary_index")
-		if planGSI.IsKnown() && !planGSI.IsNull() {
-			for v := range tfcty.ValueElementValues(planGSI) {
+	// schema.ResourceDiff.GetOk() has a bug retrieving a list inside a set (the
+	// nested list decodes to nil elements), so we read from the raw config
+	// instead. GetRawPlan() is deliberately avoided:
+	// Upjet has a limitation here, SDKv2 external client sets RawPlan
+	// to the prior state, which misses a newly configured GSI. The raw config
+	// is sufficient here even though it omits computed fields: hash_key/range_key
+	// and key_schema are two syntaxes for the same keys, so whichever one the
+	// user wrote carries every indexed attribute name. The computed counterpart
+	// is only ever a mirror of the same names (both are flattened from the same
+	// API KeySchema), so it can never contribute a name absent from config.
+	configRaw := d.GetRawConfig()
+	if configRaw.IsKnown() && !configRaw.IsNull() {
+		configGSI := configRaw.GetAttr("global_secondary_index")
+		if configGSI.IsKnown() && !configGSI.IsNull() {
+			for v := range tfcty.ValueElementValues(configGSI) {
 				hashKey := v.GetAttr("hash_key")
 				if hashKey.IsKnown() && !hashKey.IsNull() {
 					indexedAttributes[hashKey.AsString()] = true
@@ -3237,7 +3246,9 @@ func validateTableAttributes(ctx context.Context, d *schema.ResourceDiff, meta a
 				if keySchema.IsKnown() && !keySchema.IsNull() {
 					for v := range tfcty.ValueElementValues(keySchema) {
 						name := v.GetAttr("attribute_name")
-						indexedAttributes[name.AsString()] = true
+						if name.IsKnown() && !name.IsNull() {
+							indexedAttributes[name.AsString()] = true
+						}
 					}
 				}
 			}
@@ -3246,8 +3257,8 @@ func validateTableAttributes(ctx context.Context, d *schema.ResourceDiff, meta a
 
 	// validate against remote as well, because we're using the remote state as a bridge between the table and gsi resources
 	remoteGSIAttributes := map[string]bool{}
-	name := planRaw.GetAttr(names.AttrName)
-	if name.IsKnown() && d.Id() != "" {
+	name := configRaw.GetAttr(names.AttrName)
+	if name.IsKnown() && !name.IsNull() && d.Id() != "" {
 		table, err := findTableByName(ctx, conn, name.AsString())
 		if err != nil && !retry.NotFound(err) {
 			return err
