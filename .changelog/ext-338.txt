@@ -1,0 +1,11 @@
+```release-note:enhancement
+resource/aws_backup_vault_lock_configuration: Support updating `changeable_for_days`, `max_retention_days`, and `min_retention_days` in place while the vault lock is still changeable, instead of requiring resource replacement
+```
+
+```release-note:enhancement
+resource/aws_backup_vault_lock_configuration: Add `locked` and `lock_date` attributes
+```
+
+```release-note:bug
+resource/aws_backup_vault_lock_configuration: Reject `changeable_for_days` values greater than `36500` at plan time
+```

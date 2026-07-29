@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/service/backup"
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -17,6 +18,81 @@ import (
 	tfbackup "github.com/hashicorp/terraform-provider-aws/internal/service/backup"
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
+
+// Vault Lock retention values must be updatable in place: they are mutable via
+// PutBackupVaultLockConfiguration before the lock date, and marking them
+// ForceNew sends declarative callers (e.g. upjet, which refuses replacements)
+// into a permanent update loop.
+func TestVaultLockConfigurationUpdateSchema(t *testing.T) {
+	t.Parallel()
+
+	r := tfbackup.ResourceVaultLockConfiguration()
+
+	if r.UpdateWithoutTimeout == nil {
+		t.Error("resource must define UpdateWithoutTimeout")
+	}
+
+	type want struct {
+		ForceNew bool
+		Computed bool
+	}
+	cases := map[string]struct {
+		args string
+		want want
+	}{
+		"backup_vault_name is the identity and stays ForceNew": {args: "backup_vault_name", want: want{ForceNew: true}},
+		"changeable_for_days updatable":                        {args: "changeable_for_days"},
+		"max_retention_days updatable":                         {args: "max_retention_days"},
+		"min_retention_days updatable":                         {args: "min_retention_days"},
+		"lock_date exposed as computed":                        {args: "lock_date", want: want{Computed: true}},
+		"locked exposed as computed":                           {args: "locked", want: want{Computed: true}},
+	}
+
+	schemaMap := r.SchemaMap()
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			s, ok := schemaMap[tc.args]
+			if !ok {
+				t.Fatalf("attribute %q not found in schema", tc.args)
+			}
+
+			got := want{ForceNew: s.ForceNew, Computed: s.Computed}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("attribute %q (-want +got):\n%s", tc.args, diff)
+			}
+		})
+	}
+}
+
+// AWS bounds ChangeableForDays to [3, 36500]; out-of-range values must fail at
+// plan time, not at apply time.
+func TestVaultLockConfigurationChangeableForDaysValidation(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		args int
+		want bool
+	}{
+		"below minimum": {args: 2, want: true},
+		"minimum":       {args: 3},
+		"maximum":       {args: 36500},
+		"above maximum": {args: 36501, want: true},
+	}
+
+	validate := tfbackup.ResourceVaultLockConfiguration().SchemaMap()["changeable_for_days"].ValidateFunc
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, errs := validate(tc.args, "changeable_for_days")
+			if got := len(errs) > 0; got != tc.want {
+				t.Errorf("validate(%d): wantErr = %t, got errors %v", tc.args, tc.want, errs)
+			}
+		})
+	}
+}
 
 func TestAccBackupVaultLockConfiguration_basic(t *testing.T) {
 	ctx := acctest.Context(t)
