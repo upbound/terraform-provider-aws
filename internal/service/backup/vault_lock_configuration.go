@@ -8,6 +8,7 @@ package backup
 import (
 	"context"
 	"log"
+	"time"
 
 	"github.com/YakDriver/regexache"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -27,6 +28,7 @@ func resourceVaultLockConfiguration() *schema.Resource {
 	return &schema.Resource{
 		CreateWithoutTimeout: resourceVaultLockConfigurationCreate,
 		ReadWithoutTimeout:   resourceVaultLockConfigurationRead,
+		UpdateWithoutTimeout: resourceVaultLockConfigurationUpdate,
 		DeleteWithoutTimeout: resourceVaultLockConfigurationDelete,
 
 		Importer: &schema.ResourceImporter{
@@ -48,18 +50,23 @@ func resourceVaultLockConfiguration() *schema.Resource {
 				"changeable_for_days": {
 					Type:         schema.TypeInt,
 					Optional:     true,
-					ForceNew:     true,
-					ValidateFunc: validation.IntAtLeast(3),
+					ValidateFunc: validation.IntBetween(3, 36500),
+				},
+				"lock_date": {
+					Type:     schema.TypeString,
+					Computed: true,
+				},
+				"locked": {
+					Type:     schema.TypeBool,
+					Computed: true,
 				},
 				"max_retention_days": {
 					Type:     schema.TypeInt,
 					Optional: true,
-					ForceNew: true,
 				},
 				"min_retention_days": {
 					Type:     schema.TypeInt,
 					Optional: true,
-					ForceNew: true,
 				},
 			}
 		},
@@ -116,10 +123,50 @@ func resourceVaultLockConfigurationRead(ctx context.Context, d *schema.ResourceD
 
 	d.Set("backup_vault_arn", output.BackupVaultArn)
 	d.Set("backup_vault_name", output.BackupVaultName)
+	if output.LockDate != nil {
+		d.Set("lock_date", output.LockDate.Format(time.RFC3339))
+	} else {
+		d.Set("lock_date", nil)
+	}
+	d.Set("locked", output.Locked)
 	d.Set("max_retention_days", output.MaxRetentionDays)
 	d.Set("min_retention_days", output.MinRetentionDays)
 
 	return diags
+}
+
+func resourceVaultLockConfigurationUpdate(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
+	var diags diag.Diagnostics
+	conn := meta.(*conns.AWSClient).BackupClient(ctx)
+
+	// PutBackupVaultLockConfiguration replaces the entire lock configuration, so
+	// send the full desired configuration. Do not gate changeable_for_days behind
+	// HasChange: omitting it selects governance mode, silently demoting a
+	// compliance-mode lock, and the API never returns the field, so the demotion
+	// would go undetected.
+	input := &backup.PutBackupVaultLockConfigurationInput{
+		BackupVaultName: aws.String(d.Id()),
+	}
+
+	if v, ok := d.GetOk("changeable_for_days"); ok {
+		input.ChangeableForDays = aws.Int64(int64(v.(int)))
+	}
+
+	if v, ok := d.GetOk("max_retention_days"); ok {
+		input.MaxRetentionDays = aws.Int64(int64(v.(int)))
+	}
+
+	if v, ok := d.GetOk("min_retention_days"); ok {
+		input.MinRetentionDays = aws.Int64(int64(v.(int)))
+	}
+
+	_, err := conn.PutBackupVaultLockConfiguration(ctx, input)
+
+	if err != nil {
+		return sdkdiag.AppendErrorf(diags, "updating Backup Vault Lock Configuration (%s): %s", d.Id(), err)
+	}
+
+	return append(diags, resourceVaultLockConfigurationRead(ctx, d, meta)...)
 }
 
 func resourceVaultLockConfigurationDelete(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
