@@ -10,6 +10,8 @@ description: |-
 
 Provides an AWS Backup vault lock configuration resource.
 
+~> **Note:** Updates replace the whole lock configuration via [`PutBackupVaultLockConfiguration`](https://docs.aws.amazon.com/aws-backup/latest/devguide/API_PutBackupVaultLockConfiguration.html) and are only possible while the vault lock is changeable: always in `governance` mode, and until the lock date in `compliance` mode. On and after `lock_date` the vault lock is immutable — AWS permanently rejects any update or deletion of the lock configuration. AWS computes the lock date from the time of the call, so updating a `compliance` mode configuration during its grace period may move `lock_date` forward.
+
 ## Example Usage
 
 ```terraform
@@ -27,7 +29,7 @@ This resource supports the following arguments:
 
 * `region` - (Optional) Region where this resource will be [managed](https://docs.aws.amazon.com/general/latest/gr/rande.html#regional-endpoints). Defaults to the Region set in the [provider configuration](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#aws-configuration-reference).
 * `backup_vault_name` - (Required) Name of the backup vault to add a lock configuration for.
-* `changeable_for_days` - (Optional) The number of days before the lock date. If omitted creates a vault lock in `governance` mode, otherwise it will create a vault lock in `compliance` mode.
+* `changeable_for_days` - (Optional) The number of days before the lock date, between `3` and `36500`. If omitted creates a vault lock in `governance` mode, otherwise it will create a vault lock in `compliance` mode.
 * `max_retention_days` - (Optional) The maximum retention period that the vault retains its recovery points.
 * `min_retention_days` - (Optional) The minimum retention period that the vault retains its recovery points.
 
@@ -37,6 +39,8 @@ This resource exports the following attributes in addition to the arguments abov
 
 * `backup_vault_name` - The name of the vault.
 * `backup_vault_arn` - The ARN of the vault.
+* `locked` - Whether Vault Lock is currently protecting the backup vault.
+* `lock_date` - Date and time, in RFC3339 format, when the vault lock becomes immutable. Not set in `governance` mode.
 
 ## Import
 
