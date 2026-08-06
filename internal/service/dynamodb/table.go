@@ -99,6 +99,7 @@ func resourceTable() *schema.Resource {
 				}
 				return nil
 			},
+			mrscReplicaTableDrift,
 			customdiff.ForceNewIfChange("restore_source_name", func(_ context.Context, old, new, meta any) bool {
 				// If they differ force new unless new is cleared
 				// https://github.com/hashicorp/terraform-provider-aws/issues/25214
@@ -459,6 +460,16 @@ func resourceTable() *schema.Resource {
 								Computed: true,
 							},
 							"stream_label": {
+								Type:     schema.TypeString,
+								Computed: true,
+							},
+							// Per-replica stream state (from the replica table's
+							// StreamSpecification), to detect MRSC replica stream drift.
+							"stream_enabled": {
+								Type:     schema.TypeBool,
+								Computed: true,
+							},
+							"stream_view_type": {
 								Type:     schema.TypeString,
 								Computed: true,
 							},
@@ -1014,7 +1025,7 @@ func resourceTableCreate(ctx context.Context, d *schema.ResourceData, meta any) 
 		// Streaming configuration is not automatically propagated to MRSC replica
 		// tables, so propagate the configuration explicitly.
 		if d.Get("stream_enabled").(bool) {
-			if err := updateReplicaStreams(ctx, conn, d.Id(), v.List(), true, d.Get("stream_view_type").(string), false, d.Timeout(schema.TimeoutCreate)); err != nil {
+			if err := updateReplicaStreams(ctx, conn, d.Id(), v.List(), true, d.Get("stream_view_type").(string), d.Timeout(schema.TimeoutCreate)); err != nil {
 				return create.AppendDiagError(diags, names.DynamoDB, create.ErrActionCreating, resNameTable, d.Id(), fmt.Errorf("replica streams: %w", err))
 			}
 		}
@@ -1523,19 +1534,11 @@ func resourceTableUpdate(ctx context.Context, d *schema.ResourceData, meta any) 
 		}
 	}
 
-	// Updates to the streaming configuration are not automatically propagated
-	// to MRSC replica tables, so propagate the configuration explicitly.
-	// If there's a change in the view type, we will need to "cycle"
-	// the replica tables (first disable and then re-enable with the new config).
-	if d.HasChange("stream_enabled") || d.HasChange("stream_view_type") {
-		if replicas := d.Get("replica").(*schema.Set); replicas.Len() > 0 {
-			streamEnabled := d.Get("stream_enabled").(bool)
-			// Only stream_view_type changed while streams stay enabled: the replica
-			// stream must be cycled.
-			cycle := streamEnabled && !d.HasChange("stream_enabled") && d.HasChange("stream_view_type")
-			if err := updateReplicaStreams(ctx, conn, d.Id(), replicas.List(), streamEnabled, d.Get("stream_view_type").(string), cycle, d.Timeout(schema.TimeoutUpdate)); err != nil {
-				return create.AppendDiagError(diags, names.DynamoDB, create.ErrActionUpdating, resNameTable, d.Id(), err)
-			}
+	// Reconcile the DynamoDB Streams configuration of MRSC STRONG
+	// consistency-mode replicas to match the global-table level desired state.
+	if replicas := d.Get("replica").(*schema.Set); replicas.Len() > 0 {
+		if err := updateReplicaStreams(ctx, conn, d.Id(), replicas.List(), d.Get("stream_enabled").(bool), d.Get("stream_view_type").(string), d.Timeout(schema.TimeoutUpdate)); err != nil {
+			return create.AppendDiagError(diags, names.DynamoDB, create.ErrActionUpdating, resNameTable, d.Id(), err)
 		}
 	}
 
@@ -1639,19 +1642,13 @@ func cycleStreamEnabled(ctx context.Context, conn *dynamodb.Client, id string, s
 	return nil
 }
 
-// updateReplicaStreams propagates the table-level DynamoDB Streams configuration to
-// each MRSC (multi-Region strong consistency) replica of the table.
+// updateReplicaStreams propagates the global-table level streaming
+// configuration to each MRSC replica of the table when the consistency mode
+// is STRONG.
 //
-// In MRSC mode the stream definition is NOT synchronized across replicas, so enabling
-// (or disabling) a stream on the primary Region does not affect the replicas; it must
-// be set per replica Region via a regional UpdateTable call.
-//
-// MREC (multi-Region eventual consistency) replicas are intentionally skipped: DynamoDB
-// uses their streams for replication, enables them automatically, keeps their stream
-// definition synchronized with the primary, and does not allow them to be disabled.
-// Attempting to modify a MREC replica's stream here would therefore either be redundant
-// or fail, so replicas are only touched when their consistency_mode is STRONG.
-func updateReplicaStreams(ctx context.Context, conn *dynamodb.Client, tableName string, replicas []any, streamEnabled bool, streamViewType string, cycle bool, timeout time.Duration) error {
+// MREC replicas are skipped as DynamoDB uses streams for replication with that
+// consistency mode and hence streaming cannot be disabled/modified.
+func updateReplicaStreams(ctx context.Context, conn *dynamodb.Client, tableName string, replicas []any, streamEnabled bool, streamViewType string, timeout time.Duration) error {
 	for _, tfMapRaw := range replicas {
 		tfMap, ok := tfMapRaw.(map[string]any)
 		if !ok {
@@ -1668,35 +1665,59 @@ func updateReplicaStreams(ctx context.Context, conn *dynamodb.Client, tableName 
 			continue
 		}
 
-		// stream_view_type changed while the stream remains enabled: the replica stream
-		// must be disabled and re-enabled to change the view type, otherwise DynamoDB
-		// returns "Table already has an enabled stream". This mirrors the primary Region.
-		if cycle {
-			if err := cycleReplicaStreamEnabled(ctx, conn, tableName, region, awstypes.StreamViewType(streamViewType), timeout); err != nil {
-				return fmt.Errorf("cycling stream specification for replica (%s): %w", region, err)
+		curEnabled, curViewType, err := replicaStreamState(ctx, conn, tableName, region)
+		if err != nil {
+			return fmt.Errorf("reading stream state for replica (%s): %w", region, err)
+		}
+
+		switch {
+		case streamEnabled && !curEnabled:
+			// Replica table has streaming disabled, enable it.
+			if err := updateReplicaStreamSpecification(ctx, conn, tableName, region, &awstypes.StreamSpecification{
+				StreamEnabled:  aws.Bool(true),
+				StreamViewType: awstypes.StreamViewType(streamViewType),
+			}, timeout); err != nil {
+				return fmt.Errorf("enabling stream for replica (%s): %w", region, err)
 			}
-			continue
+		case streamEnabled && curEnabled && string(curViewType) != streamViewType:
+			// Replica table has streaming enabled but is configured with the wrong
+			// view type, reconcile the drift.
+			if err := cycleReplicaStreamEnabled(ctx, conn, tableName, region, awstypes.StreamViewType(streamViewType), timeout); err != nil {
+				return fmt.Errorf("changing stream view type for replica (%s): %w", region, err)
+			}
+		case !streamEnabled && curEnabled:
+			// Replica table has streaming enabled, but in the desired state,
+			// it should be disabled.
+			if err := updateReplicaStreamSpecification(ctx, conn, tableName, region, &awstypes.StreamSpecification{
+				StreamEnabled: aws.Bool(false),
+			}, timeout); err != nil {
+				return fmt.Errorf("disabling stream for replica (%s): %w", region, err)
+			}
 		}
-
-		streamSpec := &awstypes.StreamSpecification{
-			StreamEnabled: aws.Bool(streamEnabled),
-		}
-		if streamEnabled {
-			streamSpec.StreamViewType = awstypes.StreamViewType(streamViewType)
-		}
-
-		if err := updateReplicaStreamSpecification(ctx, conn, tableName, region, streamSpec, timeout); err != nil {
-			return fmt.Errorf("updating stream specification for replica (%s): %w", region, err)
-		}
+		// Else, replica table is already in the desired state.
 	}
 
 	return nil
 }
 
-// cycleReplicaStreamEnabled disables and then re-enables the stream on
-// a replica region with streamViewType. It mirrors cycleStreamEnabled
-// for the primary region and is required to change the stream view type of
-// an already-enabled MRSC replica table's streaming configuration.
+// replicaStreamState returns the current DynamoDB streaming configuration
+// for the specified replica table in the specified region.
+// It returns whether streaming is actually enabled, and if it's enabled,
+// the configured streaming view type for the replica table.
+func replicaStreamState(ctx context.Context, conn *dynamodb.Client, tableName, region string) (bool, awstypes.StreamViewType, error) {
+	table, err := findTableByName(ctx, conn, tableName, func(o *dynamodb.Options) { o.Region = region })
+	if err != nil {
+		return false, "", err
+	}
+	if table.StreamSpecification == nil || !aws.ToBool(table.StreamSpecification.StreamEnabled) {
+		return false, "", nil
+	}
+	return true, table.StreamSpecification.StreamViewType, nil
+}
+
+// cycleReplicaStreamEnabled disables and then re-enables the stream on a replica Region
+// with streamViewType. It mirrors cycleStreamEnabled for the primary Region and is
+// required to change the stream view type of an already-enabled MRSC replica stream.
 func cycleReplicaStreamEnabled(ctx context.Context, conn *dynamodb.Client, tableName, region string, streamViewType awstypes.StreamViewType, timeout time.Duration) error {
 	if err := updateReplicaStreamSpecification(ctx, conn, tableName, region, &awstypes.StreamSpecification{
 		StreamEnabled: aws.Bool(false),
@@ -2759,6 +2780,15 @@ func enrichReplicas(ctx context.Context, conn *dynamodb.Client, arn, tableName s
 		}
 		tfMap[names.AttrStreamARN] = aws.ToString(table.LatestStreamArn)
 		tfMap["stream_label"] = aws.ToString(table.LatestStreamLabel)
+		// The streaming configuration for the replica table
+		// (whether streaming is enabled and the streaming view type).
+		if table.StreamSpecification != nil {
+			tfMap["stream_enabled"] = aws.ToBool(table.StreamSpecification.StreamEnabled)
+			tfMap["stream_view_type"] = string(table.StreamSpecification.StreamViewType)
+		} else {
+			tfMap["stream_enabled"] = false
+			tfMap["stream_view_type"] = ""
+		}
 
 		tfList[i] = tfMap
 	}
@@ -3971,4 +4001,42 @@ func ctyValueLegacyEquals(lhs, rhs cty.Value) bool {
 	}
 
 	return false
+}
+
+// mrscReplicaTableDrift detects MRSC replica stream drift when the consistency
+// mode is STRONG. Each replica table's actual streaming state is stored in the
+// stream_enabled and stream_view_type computed attributes in enrichReplicas,
+// and if any replica table's streaming configuration does not match the
+// global-table level configuration, a diff is enforced.
+func mrscReplicaTableDrift(_ context.Context, diff *schema.ResourceDiff, _ any) error {
+	if diff.Id() == "" {
+		return nil
+	}
+
+	oldReplicas, _ := diff.GetChange("replica")
+	replicas, ok := oldReplicas.(*schema.Set)
+	if !ok {
+		return nil
+	}
+
+	wantEnabled, _ := diff.Get("stream_enabled").(bool)
+	wantViewType, _ := diff.Get("stream_view_type").(string)
+	for _, tfMapRaw := range replicas.List() {
+		tfMap, ok := tfMapRaw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if v, _ := tfMap["consistency_mode"].(string); awstypes.MultiRegionConsistency(v) != awstypes.MultiRegionConsistencyStrong {
+			continue
+		}
+		gotEnabled, _ := tfMap["stream_enabled"].(bool)
+		gotViewType, _ := tfMap["stream_view_type"].(string)
+		if gotEnabled != wantEnabled || (wantEnabled && gotEnabled && gotViewType != wantViewType) {
+			if err := diff.SetNewComputed(names.AttrStreamARN); err != nil {
+				return fmt.Errorf("forcing diff for MRSC replica streaming configuration drift: %w", err)
+			}
+			break
+		}
+	}
+	return nil
 }
