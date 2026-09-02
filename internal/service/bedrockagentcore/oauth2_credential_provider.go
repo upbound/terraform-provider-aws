@@ -14,6 +14,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol"
 	awstypes "github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol/types"
+	"github.com/hashicorp/terraform-plugin-framework-validators/helpers/validatordiag"
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -73,9 +74,8 @@ func oauth2ClientCredentialsAttributes(context.Context) map[string]schema.Attrib
 				stringvalidator.ConflictsWith(path.Expressions{
 					path.MatchRelative().AtParent().AtName("client_id_wo"),
 				}...),
-				stringvalidator.AlsoRequires(path.Expressions{
-					path.MatchRelative().AtParent().AtName(names.AttrClientSecret),
-				}...),
+				// The matching client secret can come from either client_secret or
+				// client_secret_config, so the pairing is enforced in ValidateConfig.
 				//stringvalidator.PreferWriteOnlyAttribute(path.MatchRelative().AtParent().AtName("client_id_wo")),
 			},
 		},
@@ -108,6 +108,14 @@ func oauth2ClientCredentialsAttributes(context.Context) map[string]schema.Attrib
 				//stringvalidator.PreferWriteOnlyAttribute(path.MatchRelative().AtParent().AtName("client_secret_wo")),
 			},
 		},
+		"client_secret_source": schema.StringAttribute{
+			CustomType: fwtypes.StringEnumType[awstypes.SecretSourceType](),
+			Optional:   true,
+			Computed:   true,
+			PlanModifiers: []planmodifier.String{
+				stringplanmodifier.UseStateForUnknown(),
+			},
+		},
 		"client_secret_wo": schema.StringAttribute{
 			Optional:  true,
 			WriteOnly: true,
@@ -126,6 +134,40 @@ func oauth2ClientCredentialsAttributes(context.Context) map[string]schema.Attrib
 	}
 }
 
+// clientSecretConfigBlock returns the schema for the block referencing a
+// customer-managed Secrets Manager secret holding the OAuth2 client secret.
+func clientSecretConfigBlock(ctx context.Context) schema.ListNestedBlock {
+	return schema.ListNestedBlock{
+		CustomType: fwtypes.NewListNestedObjectTypeOf[secretReferenceModel](ctx),
+		Validators: []validator.List{
+			listvalidator.SizeAtMost(1),
+			listvalidator.AlsoRequires(path.Expressions{
+				path.MatchRelative().AtParent().AtName("client_secret_source"),
+			}...),
+			listvalidator.ConflictsWith(path.Expressions{
+				path.MatchRelative().AtParent().AtName(names.AttrClientSecret),
+				path.MatchRelative().AtParent().AtName("client_secret_wo"),
+			}...),
+		},
+		NestedObject: schema.NestedBlockObject{
+			Attributes: map[string]schema.Attribute{
+				"secret_id": schema.StringAttribute{
+					Required: true,
+					Validators: []validator.String{
+						stringvalidator.LengthBetween(1, 2048),
+					},
+				},
+				"json_key": schema.StringAttribute{
+					Required: true,
+					Validators: []validator.String{
+						stringvalidator.LengthBetween(1, 128),
+					},
+				},
+			},
+		},
+	}
+}
+
 func basicOAuth2ProviderConfigBlock[T any](ctx context.Context) schema.ListNestedBlock {
 	attrs := oauth2ClientCredentialsAttributes(ctx)
 	attrs["oauth_discovery"] = framework.ResourceComputedListOfObjectsAttribute[oauth2DiscoveryModel](ctx)
@@ -137,6 +179,9 @@ func basicOAuth2ProviderConfigBlock[T any](ctx context.Context) schema.ListNeste
 		},
 		NestedObject: schema.NestedBlockObject{
 			Attributes: attrs,
+			Blocks: map[string]schema.Block{
+				"client_secret_config": clientSecretConfigBlock(ctx),
+			},
 		},
 	}
 }
@@ -183,6 +228,7 @@ func (r *oauth2CredentialProviderResource) Schema(ctx context.Context, request r
 							NestedObject: schema.NestedBlockObject{
 								Attributes: oauth2ClientCredentialsAttributes(ctx),
 								Blocks: map[string]schema.Block{
+									"client_secret_config": clientSecretConfigBlock(ctx),
 									"oauth_discovery": schema.ListNestedBlock{
 										CustomType: fwtypes.NewListNestedObjectTypeOf[oauth2DiscoveryModel](ctx),
 										Validators: []validator.List{
@@ -291,6 +337,11 @@ func (r *oauth2CredentialProviderResource) Create(ctx context.Context, request r
 		return
 	}
 
+	// The secret source is Optional+Computed and unknown in the plan when it isn't
+	// configured, so take the value the API reports.
+	clientCredentials.setClientSecretSource(provider.ClientSecretSource)
+	ctx = oauth2ClientCredentialsCtxKey.NewContext(ctx, clientCredentials)
+
 	smerr.AddEnrich(ctx, &response.Diagnostics,
 		fwflex.Flatten(ctx, provider, &plan,
 			fwflex.WithFieldNameSuffix("Output"),
@@ -329,6 +380,9 @@ func (r *oauth2CredentialProviderResource) Read(ctx context.Context, request res
 		smerr.AddError(ctx, &response.Diagnostics, err, smerr.ID, name)
 		return
 	}
+
+	// The secret source is returned by the API, unlike the rest of the client credentials.
+	clientCredentials.setClientSecretSource(out.ClientSecretSource)
 
 	// Stuff the client credentials into Context for AutoFlEx.
 	ctx = oauth2ClientCredentialsCtxKey.NewContext(ctx, clientCredentials)
@@ -402,6 +456,11 @@ func (r *oauth2CredentialProviderResource) Update(ctx context.Context, request r
 			return
 		}
 
+		// The secret source is Optional+Computed and unknown in the plan when it isn't
+		// configured, so take the value the API reports.
+		clientCredentials.setClientSecretSource(got.ClientSecretSource)
+		ctx = oauth2ClientCredentialsCtxKey.NewContext(ctx, clientCredentials)
+
 		smerr.AddEnrich(ctx, &response.Diagnostics,
 			fwflex.Flatten(ctx, got, &plan,
 				fwflex.WithFieldNameSuffix("Output"),
@@ -439,6 +498,138 @@ func (r *oauth2CredentialProviderResource) Delete(ctx context.Context, request r
 
 func (r *oauth2CredentialProviderResource) ImportState(ctx context.Context, request resource.ImportStateRequest, response *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root(names.AttrName), request, response)
+}
+
+func (r *oauth2CredentialProviderResource) ModifyPlan(ctx context.Context, request resource.ModifyPlanRequest, response *resource.ModifyPlanResponse) {
+	if request.State.Raw.IsNull() || request.Plan.Raw.IsNull() {
+		return
+	}
+
+	var config, state oauth2CredentialProviderResourceModel
+	smerr.AddEnrich(ctx, &response.Diagnostics, request.Config.Get(ctx, &config))
+	smerr.AddEnrich(ctx, &response.Diagnostics, request.State.Get(ctx, &state))
+	if response.Diagnostics.HasError() {
+		return
+	}
+
+	configCredentials, d := config.clientCredentials(ctx)
+	smerr.AddEnrich(ctx, &response.Diagnostics, d)
+	stateCredentials, d := state.clientCredentials(ctx)
+	smerr.AddEnrich(ctx, &response.Diagnostics, d)
+	_, configPath, d := config.vendorConfig(ctx)
+	smerr.AddEnrich(ctx, &response.Diagnostics, d)
+	_, statePath, d := state.vendorConfig(ctx)
+	smerr.AddEnrich(ctx, &response.Diagnostics, d)
+	if response.Diagnostics.HasError() {
+		return
+	}
+
+	// Switching to another vendor already forces replacement via credential_provider_vendor.
+	if configPath.Equal(path.Empty()) || !configPath.Equal(statePath) {
+		return
+	}
+
+	if configCredentials.ClientSecretSource.IsUnknown() || stateCredentials.ClientSecretSource.IsNull() || stateCredentials.ClientSecretSource.IsUnknown() {
+		return
+	}
+
+	// Derive the effective secret source from configuration: client_secret/client_secret_wo
+	// imply MANAGED, client_secret_config implies EXTERNAL. This cannot rely on the
+	// planned value alone: client_secret_source is Optional+Computed, so when it's
+	// absent from configuration, UseStateForUnknown fills it from state.
+	var effective awstypes.SecretSourceType
+	switch {
+	case !configCredentials.ClientSecretSource.IsNull():
+		effective = configCredentials.ClientSecretSource.ValueEnum()
+	case !configCredentials.ClientSecretConfig.IsNull():
+		effective = awstypes.SecretSourceTypeExternal
+	case !configCredentials.ClientSecret.IsNull() || !configCredentials.ClientSecretWO.IsNull():
+		effective = awstypes.SecretSourceTypeManaged
+	default:
+		return
+	}
+
+	// The API rejects switching the secret source between MANAGED and EXTERNAL in place.
+	if effective != stateCredentials.ClientSecretSource.ValueEnum() {
+		clientSecretSourcePath := configPath.AtName("client_secret_source")
+		// Overwrite the UseStateForUnknown-filled plan value; without a value diff,
+		// Terraform Core ignores RequiresReplace.
+		smerr.AddEnrich(ctx, &response.Diagnostics, response.Plan.SetAttribute(ctx, clientSecretSourcePath, fwtypes.StringEnumValue(effective)))
+		if response.Diagnostics.HasError() {
+			return
+		}
+		response.RequiresReplace = append(response.RequiresReplace, clientSecretSourcePath)
+	}
+}
+
+func (r *oauth2CredentialProviderResource) ValidateConfig(ctx context.Context, request resource.ValidateConfigRequest, response *resource.ValidateConfigResponse) {
+	var data oauth2CredentialProviderResourceModel
+	smerr.AddEnrich(ctx, &response.Diagnostics, request.Config.Get(ctx, &data))
+	if response.Diagnostics.HasError() {
+		return
+	}
+
+	clientCredentials, d := data.clientCredentials(ctx)
+	smerr.AddEnrich(ctx, &response.Diagnostics, d)
+	vendorName, vendorPath, d := data.vendorConfig(ctx)
+	smerr.AddEnrich(ctx, &response.Diagnostics, d)
+	if response.Diagnostics.HasError() || vendorPath.Equal(path.Empty()) {
+		return
+	}
+
+	clientIDPath := vendorPath.AtName(names.AttrClientID)
+	clientSecretPath := vendorPath.AtName(names.AttrClientSecret)
+	clientSecretConfigPath := vendorPath.AtName("client_secret_config")
+	clientSecretSourcePath := vendorPath.AtName("client_secret_source")
+	clientSecretWOPath := vendorPath.AtName("client_secret_wo")
+
+	// The client secret is supplied either directly or from a customer-managed secret.
+	if !clientCredentials.ClientID.IsNull() && clientCredentials.ClientSecret.IsNull() && clientCredentials.ClientSecretConfig.IsNull() {
+		response.Diagnostics.Append(validatordiag.InvalidAttributeCombinationDiagnostic(
+			clientIDPath,
+			fmt.Sprintf("Attribute %q or %q must be specified when %q is specified.",
+				clientSecretPath,
+				clientSecretConfigPath,
+				clientIDPath,
+			),
+		))
+	}
+
+	// Every predefined vendor requires a client ID, so a customer-managed secret
+	// alone is not enough; only the custom vendor allows omitting it. Without this
+	// the SDK rejects the request at apply time, before it reaches the API.
+	if vendorName != "custom_oauth2_provider_config" &&
+		!clientCredentials.ClientSecretConfig.IsNull() &&
+		clientCredentials.ClientID.IsNull() && clientCredentials.ClientIDWO.IsNull() {
+		response.Diagnostics.Append(validatordiag.InvalidAttributeCombinationDiagnostic(
+			clientSecretConfigPath,
+			fmt.Sprintf("Attribute %q must be specified when %q is specified.",
+				clientIDPath,
+				clientSecretConfigPath,
+			),
+		))
+	}
+
+	if clientCredentials.ClientSecretSource.IsNull() || clientCredentials.ClientSecretSource.IsUnknown() {
+		return
+	}
+
+	switch clientCredentials.ClientSecretSource.ValueEnum() {
+	case awstypes.SecretSourceTypeExternal:
+		if !clientCredentials.ClientSecret.IsNull() {
+			response.Diagnostics.Append(fwdiag.NewAttributeConflictsWhenError(clientSecretPath, clientSecretSourcePath, string(awstypes.SecretSourceTypeExternal)))
+		}
+		if !clientCredentials.ClientSecretWO.IsNull() {
+			response.Diagnostics.Append(fwdiag.NewAttributeConflictsWhenError(clientSecretWOPath, clientSecretSourcePath, string(awstypes.SecretSourceTypeExternal)))
+		}
+		if clientCredentials.ClientSecretConfig.IsNull() {
+			response.Diagnostics.Append(fwdiag.NewAttributeRequiredWhenError(clientSecretConfigPath, clientSecretSourcePath, string(awstypes.SecretSourceTypeExternal)))
+		}
+	case awstypes.SecretSourceTypeManaged:
+		if !clientCredentials.ClientSecretConfig.IsNull() {
+			response.Diagnostics.Append(fwdiag.NewAttributeConflictsWhenError(clientSecretConfigPath, clientSecretSourcePath, string(awstypes.SecretSourceTypeManaged)))
+		}
+	}
 }
 
 func findOAuth2CredentialProviderByName(ctx context.Context, conn *bedrockagentcorecontrol.Client, name string) (*bedrockagentcorecontrol.GetOauth2CredentialProviderOutput, error) {
@@ -495,13 +686,32 @@ func (m *oauth2CredentialProviderResourceModel) clientCredentials(ctx context.Co
 	data, d := m.OAuth2ProviderConfig.ToPtr(ctx)
 	diags.Append(d...)
 	if diags.HasError() || data == nil {
-		return inttypes.Zero[oauth2ClientCredentialsModel](), diags
+		return newOAuth2ClientCredentialsModel(ctx), diags
 	}
 
 	v, d := data.clientCredentials(ctx)
 	diags.Append(d...)
 
 	return v, diags
+}
+
+// vendorConfig returns the name of and the path to the configured vendor block,
+// or an empty name and path if no vendor block is configured.
+func (m *oauth2CredentialProviderResourceModel) vendorConfig(ctx context.Context) (string, path.Path, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
+	data, d := m.OAuth2ProviderConfig.ToPtr(ctx)
+	diags.Append(d...)
+	if diags.HasError() || data == nil {
+		return "", path.Empty(), diags
+	}
+
+	name := data.vendorConfigName()
+	if name == "" {
+		return "", path.Empty(), diags
+	}
+
+	return name, path.Root("oauth2_provider_config").AtListIndex(0).AtName(name).AtListIndex(0), diags
 }
 
 var (
@@ -514,6 +724,12 @@ func (m *oauth2ProviderConfigModel) Flatten(ctx context.Context, v any) diag.Dia
 
 	// Propagate client credentials from State.
 	clientCredentials := oauth2ClientCredentialsCtxKey.FromContext(ctx)
+
+	// FromContext returns the zero value if the key is absent, leaving the nested
+	// object value without an element type. Initialize it to a typed null.
+	if clientCredentials.ClientSecretConfig.IsNull() {
+		clientCredentials.ClientSecretConfig = fwtypes.NewListNestedObjectValueOfNull[secretReferenceModel](ctx)
+	}
 
 	switch t := v.(type) {
 	case awstypes.Oauth2ProviderConfigOutputMemberCustomOauth2ProviderConfig:
@@ -682,7 +898,7 @@ func (m *oauth2ProviderConfigModel) clientCredentials(ctx context.Context) (oaut
 		v, d := m.CustomOAuth2ProviderConfig.ToPtr(ctx)
 		diags.Append(d...)
 		if diags.HasError() {
-			return inttypes.Zero[oauth2ClientCredentialsModel](), diags
+			return newOAuth2ClientCredentialsModel(ctx), diags
 		}
 		return v.oauth2ClientCredentialsModel, diags
 
@@ -690,7 +906,7 @@ func (m *oauth2ProviderConfigModel) clientCredentials(ctx context.Context) (oaut
 		v, d := m.GithubOAuth2ProviderConfig.ToPtr(ctx)
 		diags.Append(d...)
 		if diags.HasError() {
-			return inttypes.Zero[oauth2ClientCredentialsModel](), diags
+			return newOAuth2ClientCredentialsModel(ctx), diags
 		}
 		return v.oauth2ClientCredentialsModel, diags
 
@@ -698,7 +914,7 @@ func (m *oauth2ProviderConfigModel) clientCredentials(ctx context.Context) (oaut
 		v, d := m.GoogleOAuth2ProviderConfig.ToPtr(ctx)
 		diags.Append(d...)
 		if diags.HasError() {
-			return inttypes.Zero[oauth2ClientCredentialsModel](), diags
+			return newOAuth2ClientCredentialsModel(ctx), diags
 		}
 		return v.oauth2ClientCredentialsModel, diags
 
@@ -706,7 +922,7 @@ func (m *oauth2ProviderConfigModel) clientCredentials(ctx context.Context) (oaut
 		v, d := m.MicrosoftOAuth2ProviderConfig.ToPtr(ctx)
 		diags.Append(d...)
 		if diags.HasError() {
-			return inttypes.Zero[oauth2ClientCredentialsModel](), diags
+			return newOAuth2ClientCredentialsModel(ctx), diags
 		}
 		return v.oauth2ClientCredentialsModel, diags
 
@@ -714,7 +930,7 @@ func (m *oauth2ProviderConfigModel) clientCredentials(ctx context.Context) (oaut
 		v, d := m.SalesforceOAuth2ProviderConfig.ToPtr(ctx)
 		diags.Append(d...)
 		if diags.HasError() {
-			return inttypes.Zero[oauth2ClientCredentialsModel](), diags
+			return newOAuth2ClientCredentialsModel(ctx), diags
 		}
 		return v.oauth2ClientCredentialsModel, diags
 
@@ -722,20 +938,66 @@ func (m *oauth2ProviderConfigModel) clientCredentials(ctx context.Context) (oaut
 		v, d := m.SlackOAuth2ProviderConfig.ToPtr(ctx)
 		diags.Append(d...)
 		if diags.HasError() {
-			return inttypes.Zero[oauth2ClientCredentialsModel](), diags
+			return newOAuth2ClientCredentialsModel(ctx), diags
 		}
 		return v.oauth2ClientCredentialsModel, diags
 	}
 
-	return inttypes.Zero[oauth2ClientCredentialsModel](), diags
+	return newOAuth2ClientCredentialsModel(ctx), diags
+}
+
+// vendorConfigName returns the name of the configured vendor block.
+func (m *oauth2ProviderConfigModel) vendorConfigName() string {
+	switch {
+	case !m.CustomOAuth2ProviderConfig.IsNull():
+		return "custom_oauth2_provider_config"
+	case !m.GithubOAuth2ProviderConfig.IsNull():
+		return "github_oauth2_provider_config"
+	case !m.GoogleOAuth2ProviderConfig.IsNull():
+		return "google_oauth2_provider_config"
+	case !m.MicrosoftOAuth2ProviderConfig.IsNull():
+		return "microsoft_oauth2_provider_config"
+	case !m.SalesforceOAuth2ProviderConfig.IsNull():
+		return "salesforce_oauth2_provider_config"
+	case !m.SlackOAuth2ProviderConfig.IsNull():
+		return "slack_oauth2_provider_config"
+	}
+
+	return ""
 }
 
 type oauth2ClientCredentialsModel struct {
-	ClientCredentialsWOVersion types.Int64  `tfsdk:"client_credentials_wo_version"`
-	ClientID                   types.String `tfsdk:"client_id"`
-	ClientIDWO                 types.String `tfsdk:"client_id_wo"`
-	ClientSecret               types.String `tfsdk:"client_secret"`
-	ClientSecretWO             types.String `tfsdk:"client_secret_wo"`
+	ClientCredentialsWOVersion types.Int64                                           `tfsdk:"client_credentials_wo_version"`
+	ClientID                   types.String                                          `tfsdk:"client_id"`
+	ClientIDWO                 types.String                                          `tfsdk:"client_id_wo"`
+	ClientSecret               types.String                                          `tfsdk:"client_secret"`
+	ClientSecretConfig         fwtypes.ListNestedObjectValueOf[secretReferenceModel] `tfsdk:"client_secret_config"`
+	ClientSecretSource         fwtypes.StringEnum[awstypes.SecretSourceType]         `tfsdk:"client_secret_source"`
+	ClientSecretWO             types.String                                          `tfsdk:"client_secret_wo"`
+}
+
+// newOAuth2ClientCredentialsModel returns an empty client credentials model.
+// The nested object value has to be explicitly typed: the zero value carries no
+// element type and cannot be converted to an object value, which happens when
+// there are no client credentials to propagate, e.g. on import, where State
+// holds no oauth2_provider_config.
+func newOAuth2ClientCredentialsModel(ctx context.Context) oauth2ClientCredentialsModel {
+	m := inttypes.Zero[oauth2ClientCredentialsModel]()
+	m.ClientSecretConfig = fwtypes.NewListNestedObjectValueOfNull[secretReferenceModel](ctx)
+
+	return m
+}
+
+// setClientSecretSource sets the secret source to the value reported by the API,
+// which is authoritative. An empty value leaves any known configured value in
+// place and resolves the unknown value planned for the Computed attribute.
+func (m *oauth2ClientCredentialsModel) setClientSecretSource(v awstypes.SecretSourceType) {
+	switch {
+	case v != "":
+		m.ClientSecretSource = fwtypes.StringEnumValue(v)
+	case m.ClientSecretSource.IsUnknown():
+		m.ClientSecretSource = fwtypes.StringEnumNull[awstypes.SecretSourceType]()
+	}
 }
 
 type oauth2DiscoveryModel struct {
