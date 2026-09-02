@@ -77,11 +77,41 @@ resource "aws_bedrockagentcore_oauth2_credential_provider" "keycloak" {
 }
 ```
 
+### GitHub OAuth Provider with a Customer-Managed Secret
+
+```terraform
+resource "aws_secretsmanager_secret" "github" {
+  name = "github-oauth-client-secret"
+}
+
+resource "aws_secretsmanager_secret_version" "github" {
+  secret_id     = aws_secretsmanager_secret.github.id
+  secret_string = jsonencode({ clientSecret = "your-github-client-secret" })
+}
+
+resource "aws_bedrockagentcore_oauth2_credential_provider" "github" {
+  name = "github-oauth-provider"
+
+  credential_provider_vendor = "GithubOauth2"
+  oauth2_provider_config {
+    github_oauth2_provider_config {
+      client_id            = "your-github-client-id"
+      client_secret_source = "EXTERNAL"
+
+      client_secret_config {
+        secret_id = aws_secretsmanager_secret_version.github.secret_id
+        json_key  = "clientSecret"
+      }
+    }
+  }
+}
+```
+
 ## Argument Reference
 
 The following arguments are required:
 
-* `credential_provider_vendor` - (Required) Vendor of the OAuth2 credential provider. Valid values: `CustomOauth2`, `GithubOauth2`, `GoogleOauth2`, `Microsoft`, `SalesforceOauth2`, `SlackOauth2`.
+* `credential_provider_vendor` - (Required) Vendor of the OAuth2 credential provider. Valid values: `CustomOauth2`, `GithubOauth2`, `GoogleOauth2`, `MicrosoftOauth2`, `SalesforceOauth2`, `SlackOauth2`.
 * `name` - (Required) Name of the OAuth2 credential provider.
 * `oauth2_provider_config` - (Required) OAuth2 provider configuration. Must contain exactly one provider type. See [`oauth2_provider_config`](#oauth2_provider_config) below.
 
@@ -107,14 +137,19 @@ The `custom_oauth2_provider_config` block supports the following:
 
 **Standard Credentials (choose one pair):**
 
-* `client_id` - (Optional) OAuth2 client ID. Cannot be used with `client_id_wo`. Must be used together with `client_secret`.
-* `client_secret` - (Optional) OAuth2 client secret. Cannot be used with `client_secret_wo`. Must be used together with `client_id`.
+* `client_id` - (Optional) OAuth2 client ID. Cannot be used with `client_id_wo`. Must be used together with `client_secret` or `client_secret_config`.
+* `client_secret` - (Optional) OAuth2 client secret. Cannot be used with `client_secret_wo` or `client_secret_config`. Must be used together with `client_id`.
 
 **Write-Only Credentials (choose one pair):**
 
 * `client_id_wo` - (Optional) Write-only OAuth2 client ID. Cannot be used with `client_id`. Must be used together with `client_secret_wo` and `client_credentials_wo_version`.
 * `client_secret_wo` - (Optional) Write-only OAuth2 client secret. Cannot be used with `client_secret`. Must be used together with `client_id_wo` and `client_credentials_wo_version`.
 * `client_credentials_wo_version` - (Optional) Used together with write-only credentials to trigger an update. Increment this value when an update to `client_id_wo` or `client_secret_wo` is required.
+
+**Customer-Managed Secret:**
+
+* `client_secret_source` - (Optional) Source of the secret holding the client secret. Valid values are `MANAGED` (AgentCore creates and manages the secret from the supplied `client_secret`) and `EXTERNAL` (the provider references a customer-managed AWS Secrets Manager secret via `client_secret_config`). Changing between `MANAGED` and `EXTERNAL` forces replacement of the resource.
+* `client_secret_config` - (Optional) Reference to a customer-managed AWS Secrets Manager secret that stores the client secret. Requires `client_secret_source = "EXTERNAL"`. [See below](#client_secret_config).
 
 **OAuth Discovery Configuration:**
 
@@ -126,8 +161,8 @@ These predefined provider blocks support the following:
 
 **Standard Credentials (choose one pair):**
 
-* `client_id` - (Optional) OAuth2 client ID. Cannot be used with `client_id_wo`. Must be used together with `client_secret`.
-* `client_secret` - (Optional) OAuth2 client secret. Cannot be used with `client_secret_wo`. Must be used together with `client_id`.
+* `client_id` - (Optional) OAuth2 client ID. Required by these vendors, either as `client_id` or `client_id_wo`. Cannot be used with `client_id_wo`. Must be used together with `client_secret` or `client_secret_config`.
+* `client_secret` - (Optional) OAuth2 client secret. Cannot be used with `client_secret_wo` or `client_secret_config`. Must be used together with `client_id`.
 
 **Write-Only Credentials (choose one pair):**
 
@@ -135,7 +170,21 @@ These predefined provider blocks support the following:
 * `client_secret_wo` - (Optional) Write-only OAuth2 client secret. Cannot be used with `client_secret`. Must be used together with `client_id_wo` and `client_credentials_wo_version`.
 * `client_credentials_wo_version` - (Optional) Used together with write-only credentials to trigger an update. Increment this value when an update to `client_id_wo` or `client_secret_wo` is required.
 
+**Customer-Managed Secret:**
+
+* `client_secret_source` - (Optional) Source of the secret holding the client secret. Valid values are `MANAGED` (AgentCore creates and manages the secret from the supplied `client_secret`) and `EXTERNAL` (the provider references a customer-managed AWS Secrets Manager secret via `client_secret_config`). Changing between `MANAGED` and `EXTERNAL` forces replacement of the resource.
+* `client_secret_config` - (Optional) Reference to a customer-managed AWS Secrets Manager secret that stores the client secret. Requires `client_secret_source = "EXTERNAL"`. [See below](#client_secret_config).
+
 **Note:** These predefined providers automatically configure OAuth discovery settings based on their respective authorization servers.
+
+### `client_secret_config`
+
+The `client_secret_config` block supports the following:
+
+* `secret_id` - (Required) ID or ARN of the customer-managed AWS Secrets Manager secret that stores the client secret.
+* `json_key` - (Required) JSON key used to extract the client secret value from the secret.
+
+-> **Note:** `client_secret_config` is not returned by the API on read, so it is not populated when importing an existing credential provider.
 
 ### `oauth_discovery`
 
