@@ -1,0 +1,365 @@
+# Builds the fork of the AWS Terraform provider for the platforms
+# consumed by upjet-based Crossplane providers and publishes them as a GitHub
+# release.
+#
+# Dispatched from the main branch, not from the release branch: a
+# workflow_dispatch trigger is only registered from the default branch, and a
+# run dispatched against another ref executes that ref's copy of the file. The
+# release branches here are re-cut from upstream tags and do not carry this
+# workflow, so instead of requiring a copy on each one, the release branch is
+# derived from the release tag (v6.62.0-upjet.2 -> upjet-v6.62.0), resolved to
+# a single commit up front, and that commit is what every job builds from.
+#
+# The release is always assembled as a draft first and is only published with
+# the requested label -- once every expected archive is confirmed present. The
+# tag is never pushed directly: the release carries it and GitHub creates it at
+# publish time.
+
+name: upjet-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag to create, e.g. v6.62.0-upjet.2. The upjet-vX.Y.Z release branch it names must exist, and the upjet suffix must be exactly 1 above the latest one.'
+        required: true
+        type: string
+      release_type:
+        # 'draft' leaves the release unpublished. The other values publish it
+        # with the corresponding GitHub label; 'none' publishes with no label
+        # at all. GitHub does not allow a prerelease to also be Latest, so
+        # 'pre-release' and 'latest' are mutually exclusive by construction.
+        description: 'Whether to leave the release as a draft, or publish it with the given GitHub label.'
+        required: false
+        default: 'draft'
+        type: choice
+        options:
+          - draft
+          - none
+          - pre-release
+          - latest
+      overwrite_draft:
+        description: 'Reuse an existing draft release with this tag instead of failing (for retrying a partially failed run).'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PKG_NAME: "terraform-provider-aws"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upjet-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  # Validates the requested tag against the fork's release rules, then resolves
+  # the release branch to a commit. Everything here goes through the API rather
+  # than a checkout: this repository is large, and the suffix check needs all
+  # tags, which would otherwise mean a full-depth clone.
+  validate:
+    name: "Validate release tag"
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.validate.outputs.release_tag }}
+      release_version: ${{ steps.validate.outputs.release_version }}
+      upjet_suffix: ${{ steps.validate.outputs.upjet_suffix }}
+      provider_version: ${{ steps.validate.outputs.provider_version }}
+      release_branch: ${{ steps.validate.outputs.release_branch }}
+      branch_sha: ${{ steps.validate.outputs.branch_sha }}
+    steps:
+      - name: Validate tag and resolve release branch
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          OVERWRITE_DRAFT: ${{ inputs.overwrite_draft }}
+        run: |
+          set -euo pipefail
+
+          fail() { echo "::error::$*"; exit 1; }
+
+          # 1. Tag format: vMAJOR.MINOR.PATCH-upjet.N
+          if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-upjet\.([1-9][0-9]*)$ ]]; then
+            fail "Invalid release tag '$RELEASE_TAG'. Expected format: vMAJOR.MINOR.PATCH-upjet.N (e.g. v6.62.0-upjet.2)."
+          fi
+          upstream_version="${BASH_REMATCH[1]}"          # 6.62.0
+          suffix_num="${BASH_REMATCH[2]}"                # 2
+          release_version="v${upstream_version}"         # v6.62.0
+          upjet_suffix="upjet.${suffix_num}"             # upjet.2
+          release_branch="upjet-${release_version}"      # upjet-v6.62.0
+
+          # 2. The release branch named by the tag must exist. Pin it to a single
+          #    commit so that a push landing mid-run cannot produce a release
+          #    whose archives were built from different commits.
+          if ! branch_sha="$(gh api "repos/${GH_REPO}/branches/${release_branch}" --jq '.commit.sha' 2>/dev/null)"; then
+            fail "Release branch '$release_branch' does not exist. Tag '$RELEASE_TAG' can only be released from it."
+          fi
+          if [[ ! "$branch_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            fail "Could not resolve the head commit of '$release_branch': got '$branch_sha'."
+          fi
+          echo "Releasing ${release_branch} at ${branch_sha}."
+
+          # 3. Collect every upjet suffix already taken on this base version,
+          #    from both tags and releases. Drafts are included deliberately: a
+          #    draft holds a tag name that is not a tag yet, so tags alone would
+          #    let a number be handed out twice.
+          tag_refs="$(gh api --paginate "repos/${GH_REPO}/git/matching-refs/tags/${release_version}-upjet." --jq '.[].ref')"
+          release_tag_names="$(gh api --paginate "repos/${GH_REPO}/releases" --jq '.[].tag_name')"
+
+          existing_suffixes="$(
+            printf '%s\n%s\n' "$tag_refs" "$release_tag_names" \
+              | sed -E 's|^refs/tags/||' \
+              | grep -E "^${release_version}-upjet\.[0-9]+$" \
+              | sed -E 's/.*-upjet\.//' \
+              | sort -un || true
+          )"
+
+          latest_suffix=0
+          if [[ -n "$existing_suffixes" ]]; then
+            latest_suffix="$(tail -n1 <<<"$existing_suffixes")"
+          fi
+          echo "Existing upjet suffixes for ${release_version}: $(tr '\n' ' ' <<<"${existing_suffixes:-<none>}")"
+
+          # 4. The tag must not already be taken, unless it is a draft release
+          #    that we were explicitly asked to overwrite.
+          if grep -Fxq "refs/tags/${RELEASE_TAG}" <<<"$tag_refs"; then
+            fail "Tag '$RELEASE_TAG' already exists."
+          fi
+          release_state="$(gh api --paginate "repos/${GH_REPO}/releases" \
+            --jq ".[] | select(.tag_name == \"${RELEASE_TAG}\") | if .draft then \"draft\" else \"published\" end")"
+
+          if [[ "$release_state" == "published" ]]; then
+            fail "Release '$RELEASE_TAG' has already been published."
+          elif [[ "$release_state" == "draft" ]]; then
+            if [[ "$OVERWRITE_DRAFT" != "true" ]]; then
+              fail "A draft release for '$RELEASE_TAG' already exists. Delete it, or re-run with 'overwrite_draft' enabled to reuse it."
+            fi
+            echo "Reusing existing draft release '$RELEASE_TAG'."
+          else
+            # 5. Fresh tag: the suffix must be exactly one above the latest one.
+            expected_suffix=$((latest_suffix + 1))
+            if [[ "$suffix_num" -ne "$expected_suffix" ]]; then
+              fail "upjet suffix must be incremental: expected '${release_version}-upjet.${expected_suffix}', got '$RELEASE_TAG'."
+            fi
+          fi
+
+          # Advisory only: flag a release branch whose VERSION file disagrees
+          # with the upstream version encoded in the tag.
+          if version_file="$(gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${GH_REPO}/contents/version/VERSION?ref=${branch_sha}" 2>/dev/null)"; then
+            version_file="$(tr -d '[:space:]' <<<"$version_file")"
+            if [[ "$version_file" != "$upstream_version" ]]; then
+              echo "::warning::version/VERSION on ${release_branch} is '$version_file' but the release tag targets upstream '$upstream_version'."
+            fi
+          else
+            echo "::warning::Could not read version/VERSION on ${release_branch} to cross-check the upstream version."
+          fi
+
+          {
+            echo "release_tag=$RELEASE_TAG"
+            echo "release_version=$release_version"
+            echo "upjet_suffix=$upjet_suffix"
+            echo "provider_version=${upstream_version}-${upjet_suffix}"
+            echo "release_branch=$release_branch"
+            echo "branch_sha=$branch_sha"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Release ${RELEASE_TAG}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Release tag | \`${RELEASE_TAG}\` |"
+            echo "| Upstream version | \`${release_version}\` |"
+            echo "| upjet suffix | \`${upjet_suffix}\` |"
+            echo "| Release branch | \`${release_branch}\` |"
+            echo "| Commit | \`${branch_sha}\` |"
+            echo "| Release type | \`${{ inputs.release_type }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Creates (or reuses) the empty draft release so the build jobs can upload
+  # their archives straight to it
+  draft-release:
+    name: "Create draft release"
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+          BRANCH_SHA: ${{ needs.validate.outputs.branch_sha }}
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Draft release '$RELEASE_TAG' already exists, reusing it."
+            exit 0
+          fi
+
+          gh release create "$RELEASE_TAG" \
+            --draft \
+            --title "$RELEASE_TAG" \
+            --target "$BRANCH_SHA" \
+            --notes "Upbound fork build of \`${{ env.PKG_NAME }}\` ${{ needs.validate.outputs.release_version }} (\`${{ needs.validate.outputs.upjet_suffix }}\`), built from \`${{ needs.validate.outputs.release_branch }}\` at \`${BRANCH_SHA}\`."
+
+  # Builds one provider binary per target platform and uploads it to the draft
+  # release as terraform-provider-aws_<version>-<suffix>_<goos>_<goarch>.zip.
+  build:
+    name: "Build ${{ matrix.goos }}_${{ matrix.goarch }}"
+    needs:
+      - validate
+      - draft-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      # The resolved commit, not the branch name, so every platform archive in
+      # a release is built from the same tree.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.validate.outputs.branch_sha }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build provider binary
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          PROVIDER_VERSION: ${{ needs.validate.outputs.provider_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          go build \
+            -o "dist/${PKG_NAME}" \
+            -trimpath \
+            -buildvcs=false \
+            -ldflags "-s -w -X 'github.com/hashicorp/terraform-provider-aws/version.ProviderVersion=${PROVIDER_VERSION}'"
+
+      - name: Package archive
+        id: package
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          UPJET_SUFFIX: ${{ needs.validate.outputs.upjet_suffix }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          zip_name="${PKG_NAME}_${RELEASE_VERSION}-${UPJET_SUFFIX}_${GOOS}_${GOARCH}.zip"
+          # -X drops extra file attributes (uid/gid, timestamps) for a stable archive.
+          (cd dist && zip -X "../${zip_name}" "${PKG_NAME}")
+          echo "zip_name=$zip_name" >> "$GITHUB_OUTPUT"
+          ls -lh "$zip_name"
+
+      - name: Upload archive to draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+          ZIP_NAME: ${{ steps.package.outputs.zip_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" "$ZIP_NAME" --clobber
+
+  # Fails the run if any expected archive is missing from the draft release
+  verify-release:
+    name: "Verify draft release assets"
+    needs:
+      - validate
+      - build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          UPJET_SUFFIX: ${{ needs.validate.outputs.upjet_suffix }}
+        run: |
+          set -euo pipefail
+
+          assets="$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')"
+          missing=0
+          for platform in darwin_arm64 linux_amd64 linux_arm64; do
+            expected="${PKG_NAME}_${RELEASE_VERSION}-${UPJET_SUFFIX}_${platform}.zip"
+            if grep -Fxq "$expected" <<<"$assets"; then
+              echo "found $expected"
+            else
+              echo "::error::missing release asset $expected"
+              missing=1
+            fi
+          done
+          [[ "$missing" -eq 0 ]] || exit 1
+
+          {
+            echo "### Draft release ready"
+            echo ""
+            echo "[${RELEASE_TAG}](${{ github.server_url }}/${{ github.repository }}/releases/tag/${RELEASE_TAG}) holds these assets:"
+            echo ""
+            while read -r asset; do echo "- \`$asset\`"; done <<<"$assets"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Flips the verified draft into a published release with the requested label.
+  # Skipped for release_type 'draft', which leaves the draft for a human to
+  # publish.
+  publish:
+    name: "Publish release (${{ inputs.release_type }})"
+    needs:
+      - validate
+      - verify-release
+    if: inputs.release_type != 'draft'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.validate.outputs.release_tag }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          BRANCH_SHA: ${{ needs.validate.outputs.branch_sha }}
+        run: |
+          set -euo pipefail
+
+          # GitHub rejects a release that is both a prerelease and Latest, so
+          # each label sets both flags explicitly rather than relying on gh's
+          # "automatic" default.
+          case "$RELEASE_TYPE" in
+            none)        label_flags=(--prerelease=false --latest=false) ;;
+            pre-release) label_flags=(--prerelease=true --latest=false) ;;
+            latest)      label_flags=(--prerelease=false --latest=true) ;;
+            *)
+              echo "::error::Unknown release_type '$RELEASE_TYPE'."
+              exit 1
+              ;;
+          esac
+
+          gh release edit "$RELEASE_TAG" --draft=false "${label_flags[@]}"
+
+          {
+            echo "### Published ${RELEASE_TAG}"
+            echo ""
+            echo "[${RELEASE_TAG}](${{ github.server_url }}/${{ github.repository }}/releases/tag/${RELEASE_TAG}) is published with label \`${RELEASE_TYPE}\`, and the \`${RELEASE_TAG}\` tag now points at \`${BRANCH_SHA}\`."
+          } >> "$GITHUB_STEP_SUMMARY"
