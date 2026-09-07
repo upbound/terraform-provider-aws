@@ -62,6 +62,9 @@ jobs:
   validate:
     name: "Validate release tag"
     runs-on: ubuntu-latest
+    # This job only reads, but reading draft releases needs `write` permission
+    permissions:
+      contents: write
     outputs:
       release_tag: ${{ steps.validate.outputs.release_tag }}
       release_version: ${{ steps.validate.outputs.release_version }}
@@ -288,6 +291,9 @@ jobs:
       - validate
       - build
     runs-on: ubuntu-latest
+    # This job only reads, but reading draft releases needs `write` permission
+    permissions:
+      contents: write
     steps:
       - name: Check assets
         env:
