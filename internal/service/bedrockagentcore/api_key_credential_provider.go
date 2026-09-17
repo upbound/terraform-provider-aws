@@ -122,7 +122,7 @@ func (r *apiKeyCredentialProviderResource) Schema(ctx context.Context, request r
 		},
 		Blocks: map[string]schema.Block{
 			"api_key_secret_config": schema.ListNestedBlock{
-				CustomType: fwtypes.NewListNestedObjectTypeOf[secretReferenceModel](ctx),
+				CustomType: fwtypes.NewListNestedObjectTypeOf[apiKeysecretReferenceModel](ctx),
 				Validators: []validator.List{
 					listvalidator.SizeAtMost(1),
 					listvalidator.AlsoRequires(path.MatchRoot("api_key_secret_source")),
@@ -389,23 +389,28 @@ func findAPIKeyCredentialProvider(ctx context.Context, conn *bedrockagentcorecon
 
 type apiKeyCredentialProviderResourceModel struct {
 	framework.WithRegionModel
-	APIKey                types.String                                          `tfsdk:"api_key"`
-	APIKeySecretARN       fwtypes.ListNestedObjectValueOf[secretModel]          `tfsdk:"api_key_secret_arn"`
-	APIKeySecretConfig    fwtypes.ListNestedObjectValueOf[secretReferenceModel] `tfsdk:"api_key_secret_config"`
-	APIKeySecretSource    fwtypes.StringEnum[awstypes.SecretSourceType]         `tfsdk:"api_key_secret_source"`
-	APIKeyWO              types.String                                          `tfsdk:"api_key_wo"`
-	APIKeyWOVersion       types.Int64                                           `tfsdk:"api_key_wo_version"`
-	CredentialProviderARN types.String                                          `tfsdk:"credential_provider_arn"`
-	Name                  types.String                                          `tfsdk:"name"`
-	Tags                  tftags.Map                                            `tfsdk:"tags"`
-	TagsAll               tftags.Map                                            `tfsdk:"tags_all"`
+	APIKey                types.String                                                `tfsdk:"api_key"`
+	APIKeySecretARN       fwtypes.ListNestedObjectValueOf[secretModel]                `tfsdk:"api_key_secret_arn"`
+	APIKeySecretConfig    fwtypes.ListNestedObjectValueOf[apiKeysecretReferenceModel] `tfsdk:"api_key_secret_config"`
+	APIKeySecretSource    fwtypes.StringEnum[awstypes.SecretSourceType]               `tfsdk:"api_key_secret_source"`
+	APIKeyWO              types.String                                                `tfsdk:"api_key_wo"`
+	APIKeyWOVersion       types.Int64                                                 `tfsdk:"api_key_wo_version"`
+	CredentialProviderARN types.String                                                `tfsdk:"credential_provider_arn"`
+	Name                  types.String                                                `tfsdk:"name"`
+	Tags                  tftags.Map                                                  `tfsdk:"tags"`
+	TagsAll               tftags.Map                                                  `tfsdk:"tags_all"`
 }
 
 type secretModel struct {
 	SecretARN fwtypes.ARN `tfsdk:"secret_arn"`
 }
 
-type secretReferenceModel struct {
+// apiKeysecretReferenceModel
+// Note(ec): Struct renamed to prevent collision with the secretReferenceModel
+// in oauth2_credential_provider. Although they are the same thing,
+// this struct is a custom addition that does not exist yet in upstream
+// so we don't want to couple the changes to secretReferenceModel here.
+type apiKeysecretReferenceModel struct {
 	SecretID types.String `tfsdk:"secret_id"`
 	JSONKey  types.String `tfsdk:"json_key"`
 }
