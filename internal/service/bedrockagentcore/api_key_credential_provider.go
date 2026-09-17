@@ -389,8 +389,3 @@ type apiKeyCredentialProviderResourceModel struct {
 type secretModel struct {
 	SecretARN fwtypes.ARN `tfsdk:"secret_arn"`
 }
-
-type secretReferenceModel struct {
-	SecretID types.String `tfsdk:"secret_id"`
-	JSONKey  types.String `tfsdk:"json_key"`
-}
