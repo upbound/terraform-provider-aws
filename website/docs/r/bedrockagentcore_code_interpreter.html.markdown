@@ -121,7 +121,9 @@ The `secrets_manager` object supports the following:
 
 Each `filesystem_configuration` block describes a single filesystem to mount into sessions started from the code interpreter. The list can contain up to 4 entries. Each block must specify exactly one of `s3_files_configuration` or `efs_configuration`, and each mount path must be unique across the list.
 
-Mounting a filesystem requires the code interpreter to use `VPC` network mode, the execution role to allow the corresponding mount actions, and the mount target security group to allow TCP port `2049` from the code interpreter security group.
+Mounting a filesystem requires the code interpreter to use `VPC` network mode, and the mount target security group to allow TCP port `2049` from the code interpreter security group.
+
+The execution role must also allow the mount actions for the filesystem type, which `CreateCodeInterpreter` validates up front and rejects with a `ValidationException` naming the missing action. For Amazon S3 Files these are `s3files:ClientMount`, `s3files:ClientWrite`, `s3files:GetAccessPoint`, and `s3files:ListMountTargets`. For Amazon EFS, see [File system configurations for AgentCore Code Interpreter](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-filesystem-configurations.html). Omit the write actions if the agent only needs read access.
 
 * `s3_files_configuration` - (Optional) Amazon S3 Files access point to mount as shared file storage. Exactly one of `s3_files_configuration` or `efs_configuration` must be specified. See [`s3_files_configuration`](#s3_files_configuration) below.
 * `efs_configuration` - (Optional) Amazon EFS access point to mount as shared file storage. Exactly one of `s3_files_configuration` or `efs_configuration` must be specified. See [`efs_configuration`](#efs_configuration) below.
