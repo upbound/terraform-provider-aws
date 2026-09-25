@@ -130,17 +130,17 @@ Mounting a filesystem requires the code interpreter to use `VPC` network mode, t
 
 The `s3_files_configuration` block supports the following:
 
-* `access_point_arn` - (Required) ARN of the Amazon S3 Files access point to mount.
-* `file_system_arn` - (Required) ARN of the Amazon S3 Files file system that owns the access point.
-* `mount_path` - (Required) Absolute path within the session at which the access point is mounted. Must be under `/mnt` with exactly one subdirectory level (for example, `/mnt/s3data`).
+* `access_point_arn` - (Required) ARN of the file system access point to mount.
+* `file_system_arn` - (Required) ARN of the file system that owns the access point.
+* `mount_path` - (Required) Absolute path within the session at which the access point is mounted. Must be under `/mnt` with exactly one subdirectory level (for example, `/mnt/data`).
 
 ### `efs_configuration`
 
 The `efs_configuration` block supports the following:
 
-* `access_point_arn` - (Required) ARN of the Amazon EFS access point to mount.
-* `file_system_arn` - (Required) ARN of the Amazon EFS file system that owns the access point.
-* `mount_path` - (Required) Absolute path within the session at which the access point is mounted. Must be under `/mnt` with exactly one subdirectory level (for example, `/mnt/efs`).
+* `access_point_arn` - (Required) ARN of the file system access point to mount.
+* `file_system_arn` - (Required) ARN of the file system that owns the access point.
+* `mount_path` - (Required) Absolute path within the session at which the access point is mounted. Must be under `/mnt` with exactly one subdirectory level (for example, `/mnt/data`).
 
 ### `network_configuration`
 
