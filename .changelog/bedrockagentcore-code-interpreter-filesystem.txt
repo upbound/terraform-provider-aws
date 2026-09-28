@@ -1,0 +1,3 @@
+```release-note:enhancement
+resource/aws_bedrockagentcore_code_interpreter: Add `filesystem_configuration` configuration block to mount Amazon S3 Files and Amazon EFS access points into code interpreter sessions
+```

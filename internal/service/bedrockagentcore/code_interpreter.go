@@ -7,8 +7,10 @@ package bedrockagentcore
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/YakDriver/regexache"
 	"github.com/YakDriver/smarterr"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockagentcorecontrol"
@@ -17,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-timeouts/resource/timeouts"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -33,6 +36,7 @@ import (
 	"github.com/hashicorp/terraform-provider-aws/internal/framework"
 	fwflex "github.com/hashicorp/terraform-provider-aws/internal/framework/flex"
 	fwtypes "github.com/hashicorp/terraform-provider-aws/internal/framework/types"
+	tfobjectvalidator "github.com/hashicorp/terraform-provider-aws/internal/framework/validators/objectvalidator"
 	"github.com/hashicorp/terraform-provider-aws/internal/retry"
 	"github.com/hashicorp/terraform-provider-aws/internal/smerr"
 	tftags "github.com/hashicorp/terraform-provider-aws/internal/tags"
@@ -94,7 +98,8 @@ func (r *codeInterpreterResource) Schema(ctx context.Context, request resource.S
 			names.AttrTagsAll: tftags.TagsAttributeComputedOnly(),
 		},
 		Blocks: map[string]schema.Block{
-			names.AttrCertificate: certificateSchema(ctx),
+			names.AttrCertificate:      certificateSchema(ctx),
+			"filesystem_configuration": codeInterpreterFilesystemConfigurationBlock(ctx),
 			names.AttrNetworkConfiguration: schema.ListNestedBlock{
 				CustomType: fwtypes.NewListNestedObjectTypeOf[codeInterpreterNetworkConfigurationModel](ctx),
 				Validators: []validator.List{
@@ -150,6 +155,84 @@ func (r *codeInterpreterResource) Schema(ctx context.Context, request resource.S
 				Create: true,
 				Delete: true,
 			}),
+		},
+	}
+}
+
+// codeInterpreterFilesystemConfigurationBlock describes the file systems mounted
+// into every session started from the code interpreter. Unlike AgentCore Runtime,
+// Code Interpreter offers no managed session storage, so only bring-your-own
+// Amazon S3 Files and Amazon EFS access points are supported.
+func codeInterpreterFilesystemConfigurationBlock(ctx context.Context) schema.Block {
+	return schema.ListNestedBlock{
+		CustomType: fwtypes.NewListNestedObjectTypeOf[toolsFileSystemConfigurationModel](ctx),
+		Validators: []validator.List{
+			// CreateCodeInterpreter accepts at most 2 S3 Files and 2 EFS access
+			// points, 4 in total. The per-type limits are left to the API.
+			listvalidator.SizeAtMost(4),
+		},
+		PlanModifiers: []planmodifier.List{
+			listplanmodifier.RequiresReplace(),
+		},
+		NestedObject: schema.NestedBlockObject{
+			Validators: []validator.Object{
+				tfobjectvalidator.ExactlyOneOfChildren(
+					path.MatchRelative().AtName("efs_configuration"),
+					path.MatchRelative().AtName("s3_files_configuration"),
+				),
+			},
+			Blocks: map[string]schema.Block{
+				"efs_configuration": schema.ListNestedBlock{
+					CustomType: fwtypes.NewListNestedObjectTypeOf[efsConfigurationModel](ctx),
+					Validators: []validator.List{
+						listvalidator.SizeAtMost(1),
+					},
+					NestedObject: schema.NestedBlockObject{
+						Attributes: map[string]schema.Attribute{
+							"access_point_arn": schema.StringAttribute{
+								Required:   true,
+								CustomType: fwtypes.ARNType,
+							},
+							"file_system_arn": schema.StringAttribute{
+								Required:   true,
+								CustomType: fwtypes.ARNType,
+							},
+							"mount_path": schema.StringAttribute{
+								Required: true,
+								Validators: []validator.String{
+									stringvalidator.LengthBetween(6, 200),
+									stringvalidator.RegexMatches(regexache.MustCompile(`^/mnt/[a-zA-Z0-9._-]+/?$`), "must be under /mnt with exactly one subdirectory level"),
+								},
+							},
+						},
+					},
+				},
+				"s3_files_configuration": schema.ListNestedBlock{
+					CustomType: fwtypes.NewListNestedObjectTypeOf[s3FilesConfigurationModel](ctx),
+					Validators: []validator.List{
+						listvalidator.SizeAtMost(1),
+					},
+					NestedObject: schema.NestedBlockObject{
+						Attributes: map[string]schema.Attribute{
+							"access_point_arn": schema.StringAttribute{
+								Required:   true,
+								CustomType: fwtypes.ARNType,
+							},
+							"file_system_arn": schema.StringAttribute{
+								Required:   true,
+								CustomType: fwtypes.ARNType,
+							},
+							"mount_path": schema.StringAttribute{
+								Required: true,
+								Validators: []validator.String{
+									stringvalidator.LengthBetween(6, 200),
+									stringvalidator.RegexMatches(regexache.MustCompile(`^/mnt/[a-zA-Z0-9._-]+/?$`), "must be under /mnt with exactly one subdirectory level"),
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 }
@@ -354,19 +437,100 @@ func findCodeInterpreter(ctx context.Context, conn *bedrockagentcorecontrol.Clie
 
 type codeInterpreterResourceModel struct {
 	framework.WithRegionModel
-	Certificates         fwtypes.ListNestedObjectValueOf[certificateModel]                         `tfsdk:"certificate"`
-	CodeInterpreterARN   types.String                                                              `tfsdk:"code_interpreter_arn"`
-	CodeInterpreterID    types.String                                                              `tfsdk:"code_interpreter_id"`
-	Description          types.String                                                              `tfsdk:"description"`
-	ExecutionRoleARN     fwtypes.ARN                                                               `tfsdk:"execution_role_arn"`
-	Name                 types.String                                                              `tfsdk:"name"`
-	NetworkConfiguration fwtypes.ListNestedObjectValueOf[codeInterpreterNetworkConfigurationModel] `tfsdk:"network_configuration"`
-	Tags                 tftags.Map                                                                `tfsdk:"tags"`
-	TagsAll              tftags.Map                                                                `tfsdk:"tags_all"`
-	Timeouts             timeouts.Value                                                            `tfsdk:"timeouts"`
+	Certificates             fwtypes.ListNestedObjectValueOf[certificateModel]                         `tfsdk:"certificate"`
+	CodeInterpreterARN       types.String                                                              `tfsdk:"code_interpreter_arn"`
+	CodeInterpreterID        types.String                                                              `tfsdk:"code_interpreter_id"`
+	Description              types.String                                                              `tfsdk:"description"`
+	ExecutionRoleARN         fwtypes.ARN                                                               `tfsdk:"execution_role_arn"`
+	FilesystemConfigurations fwtypes.ListNestedObjectValueOf[toolsFileSystemConfigurationModel]        `tfsdk:"filesystem_configuration"`
+	Name                     types.String                                                              `tfsdk:"name"`
+	NetworkConfiguration     fwtypes.ListNestedObjectValueOf[codeInterpreterNetworkConfigurationModel] `tfsdk:"network_configuration"`
+	Tags                     tftags.Map                                                                `tfsdk:"tags"`
+	TagsAll                  tftags.Map                                                                `tfsdk:"tags_all"`
+	Timeouts                 timeouts.Value                                                            `tfsdk:"timeouts"`
 }
 
 type codeInterpreterNetworkConfigurationModel struct {
 	NetworkMode fwtypes.StringEnum[awstypes.CodeInterpreterNetworkMode]     `tfsdk:"network_mode"`
 	VPCConfig   fwtypes.ListNestedObjectValueOf[vpcConfigNoS3EndpointModel] `tfsdk:"vpc_config"`
+}
+
+type toolsFileSystemConfigurationModel struct {
+	EFSConfiguration     fwtypes.ListNestedObjectValueOf[efsConfigurationModel]     `tfsdk:"efs_configuration"`
+	S3FilesConfiguration fwtypes.ListNestedObjectValueOf[s3FilesConfigurationModel] `tfsdk:"s3_files_configuration"`
+}
+
+type efsConfigurationModel struct {
+	AccessPointARN fwtypes.ARN  `tfsdk:"access_point_arn"`
+	FileSystemARN  fwtypes.ARN  `tfsdk:"file_system_arn"`
+	MountPath      types.String `tfsdk:"mount_path"`
+}
+
+type s3FilesConfigurationModel struct {
+	AccessPointARN fwtypes.ARN  `tfsdk:"access_point_arn"`
+	FileSystemARN  fwtypes.ARN  `tfsdk:"file_system_arn"`
+	MountPath      types.String `tfsdk:"mount_path"`
+}
+
+var (
+	_ fwflex.Expander  = toolsFileSystemConfigurationModel{}
+	_ fwflex.Flattener = &toolsFileSystemConfigurationModel{}
+)
+
+func (m *toolsFileSystemConfigurationModel) Flatten(ctx context.Context, v any) diag.Diagnostics {
+	var diags diag.Diagnostics
+	switch t := v.(type) {
+	case awstypes.ToolsFileSystemConfigurationMemberS3FilesConfiguration:
+		var data s3FilesConfigurationModel
+		smerr.AddEnrich(ctx, &diags, fwflex.Flatten(ctx, t.Value, &data))
+		if diags.HasError() {
+			return diags
+		}
+		m.S3FilesConfiguration = fwtypes.NewListNestedObjectValueOfPtrMust(ctx, &data)
+	case awstypes.ToolsFileSystemConfigurationMemberEfsConfiguration:
+		var data efsConfigurationModel
+		smerr.AddEnrich(ctx, &diags, fwflex.Flatten(ctx, t.Value, &data))
+		if diags.HasError() {
+			return diags
+		}
+		m.EFSConfiguration = fwtypes.NewListNestedObjectValueOfPtrMust(ctx, &data)
+
+	default:
+		diags.AddError(
+			"Unsupported Type",
+			fmt.Sprintf("tools file system configuration flatten: %T", v),
+		)
+	}
+	return diags
+}
+
+func (m toolsFileSystemConfigurationModel) Expand(ctx context.Context) (any, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	switch {
+	case !m.S3FilesConfiguration.IsNull():
+		data, d := m.S3FilesConfiguration.ToPtr(ctx)
+		smerr.AddEnrich(ctx, &diags, d)
+		if diags.HasError() {
+			return nil, diags
+		}
+		var r awstypes.ToolsFileSystemConfigurationMemberS3FilesConfiguration
+		smerr.AddEnrich(ctx, &diags, fwflex.Expand(ctx, data, &r.Value))
+		if diags.HasError() {
+			return nil, diags
+		}
+		return &r, diags
+	case !m.EFSConfiguration.IsNull():
+		data, d := m.EFSConfiguration.ToPtr(ctx)
+		smerr.AddEnrich(ctx, &diags, d)
+		if diags.HasError() {
+			return nil, diags
+		}
+		var r awstypes.ToolsFileSystemConfigurationMemberEfsConfiguration
+		smerr.AddEnrich(ctx, &diags, fwflex.Expand(ctx, data, &r.Value))
+		if diags.HasError() {
+			return nil, diags
+		}
+		return &r, diags
+	}
+	return nil, diags
 }

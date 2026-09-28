@@ -55,6 +55,33 @@ resource "aws_bedrockagentcore_code_interpreter" "example" {
 }
 ```
 
+### Code Interpreter with an Amazon S3 Files Mount
+
+```terraform
+resource "aws_bedrockagentcore_code_interpreter" "example" {
+  name               = "example-code-interpreter"
+  description        = "Code interpreter with an S3 Files mount"
+  execution_role_arn = aws_iam_role.example.arn
+
+  network_configuration {
+    network_mode = "VPC"
+
+    vpc_config {
+      security_groups = [aws_security_group.example.id]
+      subnets         = aws_subnet.example[*].id
+    }
+  }
+
+  filesystem_configuration {
+    s3_files_configuration {
+      access_point_arn = aws_s3files_access_point.example.arn
+      file_system_arn  = aws_s3files_file_system.example.arn
+      mount_path       = "/mnt/s3data"
+    }
+  }
+}
+```
+
 ## Argument Reference
 
 The following arguments are required:
@@ -68,6 +95,7 @@ The following arguments are optional:
 * `certificate` - (Optional) Certificates to install in the code interpreter. Between 1 and 200 blocks are supported. See [`certificate`](#certificate) below.
 * `description` - (Optional) Description of the code interpreter.
 * `execution_role_arn` - (Optional) ARN of the IAM role that the code interpreter assumes for execution. Required when using `SANDBOX` network mode.
+* `filesystem_configuration` - (Optional) List of filesystems to mount into every session started from the code interpreter. Up to 4 entries are supported, of which at most 2 can be Amazon S3 Files access points and at most 2 can be Amazon EFS access points. Requires `VPC` network mode. See [`filesystem_configuration`](#filesystem_configuration) below.
 * `client_token` - (Optional) Unique identifier for request idempotency. If not provided, one will be generated automatically.
 * `tags` - (Optional) Key-value map of resource tags. If configured with a provider [`default_tags` configuration block](https://registry.terraform.io/providers/hashicorp/aws/latest/docs#default_tags-configuration-block) present, tags with matching keys will overwrite those defined at the provider-level.
 
@@ -88,6 +116,33 @@ The certificate `location` object supports the following:
 The `secrets_manager` object supports the following:
 
 * `secret_arn` - (Required) ARN of the AWS Secrets Manager secret containing the certificate.
+
+### `filesystem_configuration`
+
+Each `filesystem_configuration` block describes a single filesystem to mount into sessions started from the code interpreter. The list can contain up to 4 entries. Each block must specify exactly one of `s3_files_configuration` or `efs_configuration`, and each mount path must be unique across the list.
+
+Mounting a filesystem requires the code interpreter to use `VPC` network mode, and the mount target security group to allow TCP port `2049` from the code interpreter security group.
+
+The execution role must also allow the mount actions for the filesystem type, which `CreateCodeInterpreter` validates up front and rejects with a `ValidationException` naming the missing action. For Amazon S3 Files these are `s3files:ClientMount`, `s3files:ClientWrite`, `s3files:GetAccessPoint`, and `s3files:ListMountTargets`. For Amazon EFS, see [File system configurations for AgentCore Code Interpreter](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-filesystem-configurations.html). Omit the write actions if the agent only needs read access.
+
+* `s3_files_configuration` - (Optional) Amazon S3 Files access point to mount as shared file storage. Exactly one of `s3_files_configuration` or `efs_configuration` must be specified. See [`s3_files_configuration`](#s3_files_configuration) below.
+* `efs_configuration` - (Optional) Amazon EFS access point to mount as shared file storage. Exactly one of `s3_files_configuration` or `efs_configuration` must be specified. See [`efs_configuration`](#efs_configuration) below.
+
+### `s3_files_configuration`
+
+The `s3_files_configuration` block supports the following:
+
+* `access_point_arn` - (Required) ARN of the file system access point to mount.
+* `file_system_arn` - (Required) ARN of the file system that owns the access point.
+* `mount_path` - (Required) Absolute path within the session at which the access point is mounted. Must be under `/mnt` with exactly one subdirectory level (for example, `/mnt/data`).
+
+### `efs_configuration`
+
+The `efs_configuration` block supports the following:
+
+* `access_point_arn` - (Required) ARN of the file system access point to mount.
+* `file_system_arn` - (Required) ARN of the file system that owns the access point.
+* `mount_path` - (Required) Absolute path within the session at which the access point is mounted. Must be under `/mnt` with exactly one subdirectory level (for example, `/mnt/data`).
 
 ### `network_configuration`
 
