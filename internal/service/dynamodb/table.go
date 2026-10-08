@@ -3867,12 +3867,18 @@ func customDiffGlobalSecondaryIndex(_ context.Context, diff *schema.ResourceDiff
 	stateGSI := stateRaw.GetAttr("global_secondary_index")
 	state := collectGSI(stateGSI)
 
-	planRaw := diff.GetRawPlan()
-	if !planRaw.IsKnown() || planRaw.IsNull() {
+	// The desired GSIs are read from the raw config rather than GetRawPlan():
+	// Upjet's SDKv2 external client sets RawPlan to the prior state, so
+	// comparing it with RawState would find every GSI unchanged and clear real
+	// changes (capacity updates, added or removed GSIs). Computed GSI
+	// attributes the config omits are null there, which the comparisons below
+	// already treat as not configured.
+	configRaw := diff.GetRawConfig()
+	if !configRaw.IsKnown() || configRaw.IsNull() {
 		return nil
 	}
-	planGSI := planRaw.GetAttr("global_secondary_index")
-	plan := collectGSI(planGSI)
+	configGSI := configRaw.GetAttr("global_secondary_index")
+	plan := collectGSI(configGSI)
 
 	// Adding or removing GSIs
 	if len(plan) != len(state) {
@@ -3888,13 +3894,17 @@ func customDiffGlobalSecondaryIndex(_ context.Context, diff *schema.ResourceDiff
 
 	for name, vState := range state {
 		vPlan := plan[name]
+		// An unknown desired value cannot be proven equal to the state.
+		if !vPlan.IsWhollyKnown() {
+			return nil
+		}
 
 		for attrName := range vState.Type().AttributeTypes() {
 			s := vState.GetAttr(attrName)
 			p := vPlan.GetAttr(attrName)
 			switch attrName {
 			case "hash_key":
-				if p.IsNull() && !s.IsNull() && vPlan.GetAttr("key_schema").LengthInt() > 0 {
+				if p.IsNull() && !s.IsNull() && ctyCollectionLength(vPlan.GetAttr("key_schema")) > 0 {
 					// "key_schema" is set
 					continue // change to "key_schema" will be caught by equality test
 				}
@@ -3903,7 +3913,7 @@ func customDiffGlobalSecondaryIndex(_ context.Context, diff *schema.ResourceDiff
 				}
 
 			case "range_key":
-				if p.IsNull() && !s.IsNull() && vPlan.GetAttr("key_schema").LengthInt() > 0 {
+				if p.IsNull() && !s.IsNull() && ctyCollectionLength(vPlan.GetAttr("key_schema")) > 0 {
 					// "key_schema" is set
 					continue // change to "key_schema" will be caught by equality test
 				}
@@ -3913,7 +3923,7 @@ func customDiffGlobalSecondaryIndex(_ context.Context, diff *schema.ResourceDiff
 
 			case "key_schema":
 				// key_schema is a block nested list, so the zero-value is an empty list
-				if p.LengthInt() == 0 && s.LengthInt() > 0 {
+				if ctyCollectionLength(p) == 0 && ctyCollectionLength(s) > 0 {
 					// "hash_key" is set
 					continue // change to "hash_key" will be caught by equality test
 				}
@@ -3943,8 +3953,19 @@ func customDiffGlobalSecondaryIndex(_ context.Context, diff *schema.ResourceDiff
 	return diff.Clear("global_secondary_index")
 }
 
+// ctyCollectionLength returns the length of a collection, treating a null or
+// unknown value as empty. Upjet builds the raw config from the managed
+// resource's parameters, where an omitted nested block is null rather than
+// the empty list Terraform produces.
+func ctyCollectionLength(v cty.Value) int {
+	if !v.IsKnown() || v.IsNull() {
+		return 0
+	}
+	return v.LengthInt()
+}
+
 func collectGSI(gsi cty.Value) map[string]cty.Value {
-	result := make(map[string]cty.Value, gsi.LengthInt())
+	result := make(map[string]cty.Value, ctyCollectionLength(gsi))
 	if gsi.IsKnown() && !gsi.IsNull() {
 		for v := range tfcty.ValueElementValues(gsi) {
 			name := v.GetAttr(names.AttrName)

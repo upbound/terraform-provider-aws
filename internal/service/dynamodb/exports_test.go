@@ -37,4 +37,5 @@ var (
 	TableReplicaParseResourceID                  = tableReplicaParseResourceID
 	UpdateDiffGSI                                = updateDiffGSI
 	CheckIfGSIRecreateAttributesChanged          = checkIfGSIRecreateAttributesChanged
+	CustomDiffGlobalSecondaryIndex               = customDiffGlobalSecondaryIndex
 )
