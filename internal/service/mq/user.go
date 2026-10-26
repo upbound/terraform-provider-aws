@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
@@ -67,10 +68,17 @@ func (r *resourceUser) Schema(ctx context.Context, request resource.SchemaReques
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
+			// console_access and replication_user are server-defaulted:
+			// DescribeUser reports false for an active user that never set
+			// them. They are Computed so that an unset configuration keeps
+			// the prior state instead of planning null against false on
+			// every run, which made every plan an update.
 			"console_access": schema.BoolAttribute{
 				Optional:    true,
+				Computed:    true,
 				Description: "Whether to enable console access for the user.",
 				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
 					&consoleAccessPlanModifier{},
 				},
 			},
@@ -95,7 +103,11 @@ func (r *resourceUser) Schema(ctx context.Context, request resource.SchemaReques
 			},
 			"replication_user": schema.BoolAttribute{
 				Optional:    true,
+				Computed:    true,
 				Description: "Whether the user is a replication user.",
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"username": schema.StringAttribute{
 				Required:    true,
@@ -104,29 +116,27 @@ func (r *resourceUser) Schema(ctx context.Context, request resource.SchemaReques
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-		},
-		Blocks: map[string]schema.Block{
-			// Pending changes information returned by the AWS API. This is a
-			// computed-only attribute that tracks pending modifications to
-			// the user.
-			"pending": schema.SingleNestedBlock{
+			// Pending changes reported by the AWS API. The value only ever
+			// comes from DescribeUser, so it is a Computed attribute: a
+			// block cannot be computed, and an absent block is planned as
+			// null, which reported a diff on every run while a change was
+			// pending on the broker.
+			"pending": schema.SingleNestedAttribute{
 				CustomType:  fwtypes.NewObjectTypeOf[pendingModel](ctx),
+				Computed:    true,
 				Description: "Tracks pending modifications returned by the AWS MQ API. This field allows you to monitor changes that are actively being processed before they are fully applied.",
 				Attributes: map[string]schema.Attribute{
 					"pending_change": schema.StringAttribute{
 						Computed:    true,
-						Optional:    false,
 						Description: "The type of pending change. Valid values are CREATE, UPDATE, or DELETE.",
 					},
 					"console_access": schema.BoolAttribute{
 						Computed:    true,
-						Optional:    false,
 						Description: "The pending console access value if a change to console access is being processed.",
 					},
 					"groups": schema.ListAttribute{
 						ElementType: types.StringType,
 						Computed:    true,
-						Optional:    false,
 						Description: "The pending groups value if a change to groups is being processed.",
 						PlanModifiers: []planmodifier.List{
 							&listSortModifier{},
@@ -211,9 +221,9 @@ func (r *resourceUser) Update(ctx context.Context, request resource.UpdateReques
 		return
 	}
 
-	if userHasChanges(plan, state) {
-		conn := r.Meta().MQClient(ctx)
+	conn := r.Meta().MQClient(ctx)
 
+	if userHasChanges(plan, state) {
 		input := &mq.UpdateUserInput{
 			BrokerId:        flex.StringFromFramework(ctx, plan.BrokerID),
 			Password:        flex.StringFromFramework(ctx, plan.Password),
@@ -229,7 +239,18 @@ func (r *resourceUser) Update(ctx context.Context, request resource.UpdateReques
 		}
 	}
 
-	response.Diagnostics.Append(response.State.Set(ctx, &plan)...)
+	// The computed attributes the plan left unknown (pending, and
+	// console_access or replication_user when the prior state had no
+	// value) must be settled before the plan becomes state.
+	userDetails, err := findUserByID(ctx, conn, state.BrokerID.ValueString(), state.ID.ValueString())
+	if err != nil {
+		response.Diagnostics.Append(diagErrorFramework(names.MQ, create.ErrActionUpdating, ResourceNameUser, fmt.Sprintf("%s/%s", state.BrokerID.ValueString(), state.ID.ValueString()), err))
+		return
+	}
+
+	newState := plan
+	response.Diagnostics.Append(newState.resolveUnknownFromOutput(ctx, userDetails)...)
+	response.Diagnostics.Append(response.State.Set(ctx, &newState)...)
 }
 
 func (r *resourceUser) Delete(ctx context.Context, request resource.DeleteRequest, response *resource.DeleteResponse) {
@@ -328,29 +349,65 @@ func (rd *resourceUserData) refreshFromOutput(ctx context.Context, out *mq.Descr
 	rd.BrokerID = flex.StringToFramework(ctx, out.BrokerId)
 	rd.ConsoleAccess = flex.BoolToFramework(ctx, out.ConsoleAccess)
 	rd.Groups = flex.FlattenFrameworkStringValueListOfString(ctx, out.Groups)
-	rd.ReplicationUser = flex.BoolToFramework(ctx, out.ReplicationUser)
 	rd.Username = flex.StringToFramework(ctx, out.Username)
 	rd.ID = rd.Username
 
-	// Populate the pending attribute with data from the AWS API response.
-	// If there are pending changes, populate with actual values; otherwise use
-	// an empty struct.
-	if out.Pending != nil {
-		s := string(out.Pending.PendingChange)
-		pending, d := fwtypes.NewObjectValueOf(ctx, &pendingModel{
-			ConsoleAccess: flex.BoolToFramework(ctx, out.Pending.ConsoleAccess),
-			PendingChange: flex.StringToFramework(ctx, &s),
-			Groups:        flex.FlattenFrameworkStringValueListOfString(ctx, out.Pending.Groups),
-		})
-		if d.HasError() {
-			return d
-		}
-		rd.Pending = pending
-	} else {
-		// Initialize with empty values when no pending changes exist.
-		pending := fwtypes.NewObjectValueOfNull[pendingModel](ctx)
-		rd.Pending = pending
+	// DescribeUser omits replication_user while the user is pending
+	// creation, and the pending object has no replication_user to fall
+	// back on. Keep the value already held rather than nulling it, so an
+	// explicitly configured value does not plan an update on every run
+	// until the broker reboots. An unknown value cannot be stored.
+	switch {
+	case out.ReplicationUser != nil:
+		rd.ReplicationUser = flex.BoolToFramework(ctx, out.ReplicationUser)
+	case rd.ReplicationUser.IsUnknown():
+		rd.ReplicationUser = types.BoolNull()
 	}
+
+	return rd.refreshPendingFromOutput(ctx, out)
+}
+
+// resolveUnknownFromOutput settles the computed attributes that the plan left
+// unknown from the AWS API response and keeps every known planned value as
+// planned. The framework marks a computed attribute absent from the
+// configuration as unknown whenever the plan changes anything, and an unknown
+// value cannot be stored in state.
+func (rd *resourceUserData) resolveUnknownFromOutput(ctx context.Context, out *mq.DescribeUserOutput) diag.Diagnostics {
+	if out == nil {
+		return nil
+	}
+
+	if rd.ConsoleAccess.IsUnknown() {
+		rd.ConsoleAccess = flex.BoolToFramework(ctx, out.ConsoleAccess)
+	}
+	if rd.ReplicationUser.IsUnknown() {
+		rd.ReplicationUser = flex.BoolToFramework(ctx, out.ReplicationUser)
+	}
+	if rd.Pending.IsUnknown() {
+		return rd.refreshPendingFromOutput(ctx, out)
+	}
+	return nil
+}
+
+// refreshPendingFromOutput populates the pending attribute from the AWS API
+// response: the pending values when a change is being processed, null
+// otherwise.
+func (rd *resourceUserData) refreshPendingFromOutput(ctx context.Context, out *mq.DescribeUserOutput) diag.Diagnostics {
+	if out.Pending == nil {
+		rd.Pending = fwtypes.NewObjectValueOfNull[pendingModel](ctx)
+		return nil
+	}
+
+	s := string(out.Pending.PendingChange)
+	pending, d := fwtypes.NewObjectValueOf(ctx, &pendingModel{
+		ConsoleAccess: flex.BoolToFramework(ctx, out.Pending.ConsoleAccess),
+		PendingChange: flex.StringToFramework(ctx, &s),
+		Groups:        flex.FlattenFrameworkStringValueListOfString(ctx, out.Pending.Groups),
+	})
+	if d.HasError() {
+		return d
+	}
+	rd.Pending = pending
 	return nil
 }
 
