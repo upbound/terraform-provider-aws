@@ -120,29 +120,14 @@ func (r *resourceUser) Schema(ctx context.Context, request resource.SchemaReques
 			// comes from DescribeUser, so it is a Computed attribute: a
 			// block cannot be computed, and an absent block is planned as
 			// null, which reported a diff on every run while a change was
-			// pending on the broker.
-			"pending": schema.SingleNestedAttribute{
+			// pending on the broker. It is an object attribute rather than
+			// a nested attribute because the provider is served over
+			// protocol version 5, which has no nested attributes: Terraform
+			// refuses the whole provider schema otherwise.
+			"pending": schema.ObjectAttribute{
 				CustomType:  fwtypes.NewObjectTypeOf[pendingModel](ctx),
 				Computed:    true,
-				Description: "Tracks pending modifications returned by the AWS MQ API. This field allows you to monitor changes that are actively being processed before they are fully applied.",
-				Attributes: map[string]schema.Attribute{
-					"pending_change": schema.StringAttribute{
-						Computed:    true,
-						Description: "The type of pending change. Valid values are CREATE, UPDATE, or DELETE.",
-					},
-					"console_access": schema.BoolAttribute{
-						Computed:    true,
-						Description: "The pending console access value if a change to console access is being processed.",
-					},
-					"groups": schema.ListAttribute{
-						ElementType: types.StringType,
-						Computed:    true,
-						Description: "The pending groups value if a change to groups is being processed.",
-						PlanModifiers: []planmodifier.List{
-							&listSortModifier{},
-						},
-					},
-				},
+				Description: "Tracks pending modifications returned by the AWS MQ API: the type of pending change (CREATE, UPDATE or DELETE) and the pending console_access and groups values while a change is being processed.",
 			},
 		},
 	}

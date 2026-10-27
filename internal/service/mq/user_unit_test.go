@@ -13,6 +13,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	fwtypes "github.com/hashicorp/terraform-provider-aws/internal/framework/types"
 )
@@ -58,6 +59,16 @@ func TestUserSchemaServerDefaultedAttributesAreComputed(t *testing.T) {
 				t.Errorf("-want +got:\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestUserSchemaHasNoNestedAttributes(t *testing.T) {
+	t.Parallel()
+
+	for name, a := range userSchema(t).Schema.Attributes {
+		if _, ok := a.(schema.NestedAttribute); ok {
+			t.Errorf("attribute %q is a nested attribute: protocol version 5 cannot serve it, so Terraform fails to load the provider schema", name)
+		}
 	}
 }
 
