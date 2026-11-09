@@ -88,6 +88,35 @@ resource "aws_glue_catalog_table_optimizer" "example" {
 }
 ```
 
+### Compaction Optimizer with VPC Configuration
+
+```terraform
+resource "aws_glue_catalog_table_optimizer" "example" {
+  catalog_id    = "123456789012"
+  database_name = "example_database"
+  table_name    = "example_table"
+
+  configuration {
+    role_arn = "arn:aws:iam::123456789012:role/example-role"
+    enabled  = true
+
+    compaction_configuration {
+      iceberg_configuration {
+        strategy              = "binpack"
+        min_input_files       = 5
+        delete_file_threshold = 1
+      }
+    }
+
+    vpc_configuration {
+      glue_connection_name = "example-connection"
+    }
+  }
+
+  type = "compaction"
+}
+```
+
 ## Argument Reference
 
 This resource supports the following arguments:
@@ -106,6 +135,7 @@ This resource supports the following arguments:
 * `orphan_file_deletion_configuration` - (Optional) Configuration block for an orphan file deletion optimizer. See [`orphan_file_deletion_configuration` Block](#orphan_file_deletion_configuration-block) for additional details.
 * `retention_configuration` - (Optional) Configuration block for a snapshot retention optimizer. See [`retention_configuration` Block](#retention_configuration-block) for additional details.
 * `role_arn` - (Required) ARN of the IAM role to use for the table optimizer.
+* `vpc_configuration` - (Optional) Configuration block for running the table optimizer inside a VPC. See [`vpc_configuration` Block](#vpc_configuration-block) for additional details.
 
 #### `compaction_configuration` Block
 
@@ -137,6 +167,10 @@ This resource supports the following arguments:
 * `number_of_snapshots_to_retain` - (Optional) Number of Iceberg snapshots to retain within the retention period. Defaults to `1` or the corresponding Iceberg table configuration field if it exists.
 * `run_rate_in_hours` - (Optional) Interval in hours between retention job runs. Defaults to `24`.
 * `snapshot_retention_period_in_days` - (Optional) Number of days to retain the Iceberg snapshots. Defaults to `5`, or the corresponding Iceberg table configuration field if it exists.
+
+#### `vpc_configuration` Block
+
+* `glue_connection_name` - (Required) Name of the Glue network connection used to run the table optimizer inside a VPC. Required to perform optimization on tables located in a customer VPC, for example when access to S3 is restricted to a VPC endpoint.
 
 ## Attribute Reference
 

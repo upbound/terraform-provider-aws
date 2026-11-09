@@ -7,6 +7,7 @@ package glue
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/glue"
@@ -163,6 +164,19 @@ func (r *catalogTableOptimizerResource) Schema(ctx context.Context, _ resource.S
 												},
 											},
 										},
+									},
+								},
+							},
+						},
+						names.AttrVPCConfiguration: schema.ListNestedBlock{
+							CustomType: fwtypes.NewListNestedObjectTypeOf[vpcConfigurationData](ctx),
+							Validators: []validator.List{
+								listvalidator.SizeAtMost(1),
+							},
+							NestedObject: schema.NestedBlockObject{
+								Attributes: map[string]schema.Attribute{
+									"glue_connection_name": schema.StringAttribute{
+										Required: true,
 									},
 								},
 							},
@@ -484,6 +498,41 @@ type configurationData struct {
 	RoleARN                         fwtypes.ARN                                                          `tfsdk:"role_arn"`
 	RetentionConfiguration          fwtypes.ListNestedObjectValueOf[retentionConfigurationData]          `tfsdk:"retention_configuration"`
 	OrphanFileDeletionConfiguration fwtypes.ListNestedObjectValueOf[orphanFileDeletionConfigurationData] `tfsdk:"orphan_file_deletion_configuration"`
+	VPCConfiguration                fwtypes.ListNestedObjectValueOf[vpcConfigurationData]                `tfsdk:"vpc_configuration"`
+}
+
+type vpcConfigurationData struct {
+	GlueConnectionName types.String `tfsdk:"glue_connection_name"`
+}
+
+var (
+	_ fwflex.Expander  = vpcConfigurationData{}
+	_ fwflex.Flattener = &vpcConfigurationData{}
+)
+
+func (m vpcConfigurationData) Expand(ctx context.Context) (any, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	switch {
+	case !m.GlueConnectionName.IsNull():
+		var r awstypes.TableOptimizerVpcConfigurationMemberGlueConnectionName
+		r.Value = fwflex.StringValueFromFramework(ctx, m.GlueConnectionName)
+		return &r, diags
+	}
+	return nil, diags
+}
+
+func (m *vpcConfigurationData) Flatten(ctx context.Context, v any) diag.Diagnostics {
+	var diags diag.Diagnostics
+	switch t := v.(type) {
+	case awstypes.TableOptimizerVpcConfigurationMemberGlueConnectionName:
+		m.GlueConnectionName = fwflex.StringValueToFramework(ctx, t.Value)
+	default:
+		diags.AddError(
+			"Unsupported Type",
+			fmt.Sprintf("vpc configuration flatten: %T", v),
+		)
+	}
+	return diags
 }
 
 type retentionConfigurationData struct {
